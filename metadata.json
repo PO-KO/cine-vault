@@ -1,0 +1,6 @@
+{
+  "name": "CineVault Local",
+  "description": "Personal local media streaming web application for browsing, organizing, and watching locally stored anime, TV shows, movies, and video files across PC, mobile, and Smart TV.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

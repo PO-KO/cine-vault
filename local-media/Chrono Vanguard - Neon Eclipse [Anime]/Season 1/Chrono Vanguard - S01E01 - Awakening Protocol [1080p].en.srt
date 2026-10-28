@@ -1,0 +1,20 @@
+1
+00:00:00,500 --> 00:00:04,500
+[Sector 7 Orbital Elevator — 2149 AD]
+All telemetry channels are locked onto the Eclipse core.
+
+2
+00:00:04,800 --> 00:00:09,200
+Commander Ren, the neural synchronization rate just passed 98 percent!
+
+3
+00:00:09,500 --> 00:00:14,000
+Release the electromagnetic clamps. Vanguard Unit-01 is cleared for launch.
+
+4
+00:00:14,500 --> 00:00:19,500
+If the temporal rift expands any further, Neo-Tokyo won't survive the night.
+
+5
+00:00:20,000 --> 00:00:26,000
+Initiating Awakening Protocol. Engage auxiliary thrusters on my mark!
