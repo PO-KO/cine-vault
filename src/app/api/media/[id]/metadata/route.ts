@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ensureInitialized, saveState, scanLibrary } from '@/src/lib/mediaServer';
-import { MediaCategory } from '@/src/types/media';
+import {
+  ensureInitialized,
+  saveState,
+  scanLibraryWithMetadata,
+} from '@/src/lib/mediaServer';
+import { ExternalMetadataMatch, MediaCategory } from '@/src/types/media';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,13 +15,26 @@ export async function PUT(
   const { id } = await context.params;
   const state = await ensureInitialized();
   const body = await request.json().catch(() => ({}));
-  const { title, category, synopsis, customPosterUrl, isFavorite } = body as {
+  const {
+    title,
+    category,
+    synopsis,
+    customPosterUrl,
+    isFavorite,
+    externalMatch,
+  } = body as {
     title?: string;
     category?: MediaCategory;
     synopsis?: string;
     customPosterUrl?: string;
     isFavorite?: boolean;
+    externalMatch?: ExternalMetadataMatch;
   };
+
+  if (externalMatch) {
+    if (!state.externalMetadataCache) state.externalMetadataCache = {};
+    state.externalMetadataCache[id] = externalMatch;
+  }
 
   if (typeof title === 'string') {
     if (title.trim()) {
@@ -28,7 +45,12 @@ export async function PUT(
   }
 
   if (category && ['anime', 'tv', 'movies', 'other'].includes(category)) {
+    const previousCat = state.manualCategories[id];
     state.manualCategories[id] = category;
+    // If category changed and no explicit externalMatch was sent, clear cached metadata so it re-resolves from the right provider (AniList vs TMDB)
+    if (!externalMatch && previousCat !== category && state.externalMetadataCache?.[id]) {
+      delete state.externalMetadataCache[id];
+    }
   }
 
   if (typeof synopsis === 'string') {
@@ -56,7 +78,7 @@ export async function PUT(
   }
 
   saveState(state);
-  const { items } = scanLibrary(state);
+  const { items } = await scanLibraryWithMetadata(state);
   const updatedItem = items.find((item) => item.id === id);
   return NextResponse.json({ item: updatedItem, items });
 }

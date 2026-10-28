@@ -5,7 +5,7 @@ import {
   buildCapabilities,
   ensureInitialized,
   saveState,
-  scanLibrary,
+  scanLibraryWithMetadata,
 } from '@/src/lib/mediaServer';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     saveState(state);
   }
 
-  const { items, totalFilesScanned } = scanLibrary(state);
+  const { items, totalFilesScanned } = await scanLibraryWithMetadata(state);
   return NextResponse.json({
     items,
     capabilities: buildCapabilities(state, totalFilesScanned),

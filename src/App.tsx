@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Play, FolderOpen, Film, RotateCcw } from 'lucide-react';
 import {
+  ExternalMetadataMatch,
   LibraryResponse,
   MediaCategory,
   MediaEpisode,
@@ -25,6 +26,7 @@ import { LibrarySettingsModal } from './components/LibrarySettingsModal';
 import { ControlsHelpModal } from './components/ControlsHelpModal';
 import { VideoPlayerModal } from './components/VideoPlayerModal';
 import { formatRemainingTime, formatTimecode } from './utils/formatters';
+import { buildLibraryFromPickedFiles } from './utils/clientFolderScanner';
 
 export default function App() {
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -32,6 +34,7 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [usingClientPickedFolder, setUsingClientPickedFolder] = useState<boolean>(false);
 
   // Navigation & Filtering State
   const [activeTab, setActiveTab] = useState<NavTab>('all');
@@ -92,6 +95,7 @@ export default function App() {
       const data: LibraryResponse = await res.json();
       setItems(data.items);
       setCapabilities(data.capabilities);
+      setUsingClientPickedFolder(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to connect to local media server.');
     } finally {
@@ -157,6 +161,38 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleSpatialKeys);
   }, [activePlayback, editingItem, showLibrarySettings, showControlsHelp]);
 
+  // Pick a local folder directly from the user's PC via native OS directory picker
+  const handlePickClientFolderFiles = useCallback(async (fileList: FileList) => {
+    setIsScanning(true);
+    try {
+      const { rootFolderName, items: pickedItems, totalVideoFiles } =
+        await buildLibraryFromPickedFiles(fileList);
+
+      if (pickedItems.length === 0) {
+        setError(
+          `No supported video files (.mp4, .mkv, .webm, .avi, .mov) were found inside "${rootFolderName}".`
+        );
+        return;
+      }
+
+      setError(null);
+      setItems(pickedItems);
+      setUsingClientPickedFolder(true);
+      setCapabilities((prev) =>
+        prev
+          ? {
+              ...prev,
+              rootPath: `${rootFolderName} (Picked from Local PC)`,
+              totalFilesScanned: totalVideoFiles,
+              lastScannedAt: new Date().toISOString(),
+            }
+          : null
+      );
+    } finally {
+      setIsScanning(false);
+    }
+  }, []);
+
   // Handlers for server mutations
   const handleRescan = async () => {
     setIsScanning(true);
@@ -170,6 +206,7 @@ export default function App() {
         const data: LibraryResponse = await res.json();
         setItems(data.items);
         setCapabilities(data.capabilities);
+        setUsingClientPickedFolder(false);
       }
     } finally {
       setIsScanning(false);
@@ -189,9 +226,17 @@ export default function App() {
     const data: LibraryResponse = await res.json();
     setItems(data.items);
     setCapabilities(data.capabilities);
+    setUsingClientPickedFolder(false);
   };
 
   const handleToggleFavorite = async (item: MediaItem) => {
+    if (item.isClientPickedFolder || usingClientPickedFolder) {
+      setItems((prev) =>
+        prev.map((m) => (m.id === item.id ? { ...m, isFavorite: !m.isFavorite } : m))
+      );
+      return;
+    }
+
     const res = await fetch(`/api/media/${item.id}/metadata`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -210,8 +255,37 @@ export default function App() {
       category: MediaCategory;
       synopsis: string;
       customPosterUrl: string;
+      externalMatch?: ExternalMetadataMatch;
     }
   ) => {
+    if (usingClientPickedFolder) {
+      setItems((prev) =>
+        prev.map((m) => {
+          if (m.id !== id) return m;
+          const match = updates.externalMatch;
+          const nextPoster =
+            updates.customPosterUrl || match?.posterUrl || m.posterUrl;
+          return {
+            ...m,
+            title: updates.title || match?.title || m.title,
+            category: updates.category,
+            isManualCategory: true,
+            synopsis: updates.synopsis || match?.synopsis || m.synopsis,
+            posterUrl: nextPoster,
+            bannerUrl: match?.bannerUrl || nextPoster || m.bannerUrl,
+            customPosterUrl: updates.customPosterUrl,
+            releaseYear: match?.releaseYear || m.releaseYear,
+            genres: match?.genres?.length ? match.genres : m.genres,
+            ratingScore: match?.ratingScore ?? m.ratingScore,
+            studioOrNetwork: match?.studioOrNetwork || m.studioOrNetwork,
+            metadataProvider: match?.provider || m.metadataProvider,
+            externalId: match?.externalId || m.externalId,
+          };
+        })
+      );
+      return;
+    }
+
     const res = await fetch(`/api/media/${id}/metadata`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -225,6 +299,47 @@ export default function App() {
 
   const handleSaveProgress = useCallback(
     async (episodeId: string, currentTime: number, duration: number, completed?: boolean) => {
+      if (usingClientPickedFolder) {
+        setItems((prev) =>
+          prev.map((m) => {
+            const hasEp = m.episodes.some((e) => e.id === episodeId);
+            if (!hasEp) return m;
+
+            const updatedEpisodes = m.episodes.map((ep) => {
+              if (ep.id !== episodeId) return ep;
+              const nextDur = duration > 0 ? Math.floor(duration) : ep.progress.duration;
+              const nextTime = Math.floor(currentTime);
+              const isDone =
+                typeof completed === 'boolean'
+                  ? completed
+                  : nextDur > 0 && nextTime / nextDur >= 0.92;
+              return {
+                ...ep,
+                progress: {
+                  currentTime: isDone && completed ? 0 : nextTime,
+                  duration: nextDur,
+                  completed: isDone,
+                  updatedAt: new Date().toISOString(),
+                },
+              };
+            });
+
+            const watchedEpisodes = updatedEpisodes.filter((e) => e.progress.completed).length;
+            const inProgressEpisode = updatedEpisodes
+              .filter((e) => e.progress.currentTime > 0 && !e.progress.completed)
+              .sort((a, b) => (b.progress.updatedAt || '').localeCompare(a.progress.updatedAt || ''))[0];
+
+            return {
+              ...m,
+              episodes: updatedEpisodes,
+              watchedEpisodes,
+              inProgressEpisode,
+            };
+          })
+        );
+        return;
+      }
+
       const res = await fetch(`/api/episodes/${episodeId}/progress`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -234,7 +349,7 @@ export default function App() {
         await fetchLibrary();
       }
     },
-    [fetchLibrary]
+    [fetchLibrary, usingClientPickedFolder]
   );
 
   const handleToggleWatched = async (episode: MediaEpisode, completed: boolean) => {
@@ -259,7 +374,7 @@ export default function App() {
     );
   }, [items]);
 
-  // Featured Spotlight Item (most recent Continue Watching item or first item in library)
+  // Featured Spotlight Item
   const spotlightEntry = useMemo(() => {
     if (continueWatchingList.length > 0) {
       return continueWatchingList[0];
@@ -274,13 +389,11 @@ export default function App() {
   // Filtered Library Items
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      // Category / Watchlist Tab Filter
       if (activeTab === 'watchlist' && !item.isFavorite) return false;
       if (activeTab !== 'all' && activeTab !== 'watchlist' && item.category !== activeTab) {
         return false;
       }
 
-      // Watched Status Filter
       if (watchedFilter === 'continue' && !item.inProgressEpisode) return false;
       if (watchedFilter === 'unwatched' && (item.watchedEpisodes > 0 || item.inProgressEpisode)) {
         return false;
@@ -292,18 +405,18 @@ export default function App() {
         return false;
       }
 
-      // Search Query Filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesTitle = item.title.toLowerCase().includes(q);
         const matchesFolder = item.relativePath.toLowerCase().includes(q);
+        const matchesGenre = item.genres?.some((g) => g.toLowerCase().includes(q));
         const matchesEpisode = item.episodes.some(
           (ep) =>
             ep.title.toLowerCase().includes(q) ||
             ep.fileName.toLowerCase().includes(q) ||
             ep.containerFormat.toLowerCase().includes(q)
         );
-        if (!matchesTitle && !matchesFolder && !matchesEpisode) return false;
+        if (!matchesTitle && !matchesFolder && !matchesGenre && !matchesEpisode) return false;
       }
 
       return true;
@@ -325,7 +438,7 @@ export default function App() {
         tvMode={tvMode}
       />
 
-      {/* 2. Workspace Toolbar (Search, Filters, Theme & TV Mode) */}
+      {/* 2. Workspace Toolbar (Search, Filters, Pick PC Folder, Theme & TV Mode) */}
       <WorkspaceToolbar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -338,6 +451,7 @@ export default function App() {
         tvMode={tvMode}
         onToggleTvMode={() => setTvMode((t) => !t)}
         onRescan={handleRescan}
+        onPickClientFolderFiles={handlePickClientFolderFiles}
         isScanning={isScanning}
         onOpenShortcutsHelp={() => setShowControlsHelp(true)}
         totalItemsCount={items.length}
@@ -358,20 +472,29 @@ export default function App() {
         ) : error ? (
           <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-8 text-center space-y-3">
             <h2 className="font-display font-bold text-xl text-red-600 dark:text-red-400">
-              Unable to Read Local Media Library
+              Unable to Read Media Folder
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-300 max-w-md mx-auto">{error}</p>
-            <button
-              type="button"
-              onClick={fetchLibrary}
-              className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg cursor-pointer"
-            >
-              Retry Connection
-            </button>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={fetchLibrary}
+                className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg cursor-pointer"
+              >
+                Load Default Sample Library
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLibrarySettings(true)}
+                className="px-4 py-2 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-200 dark:bg-slate-800 rounded-lg cursor-pointer"
+              >
+                Pick Another Folder
+              </button>
+            </div>
           </div>
         ) : (
           <>
-            {/* Hero Spotlight Section (shown when browsing All Library without active search) */}
+            {/* Hero Spotlight Section */}
             {activeTab === 'all' && watchedFilter === 'all' && !searchQuery && spotlightEntry && (
               <HeroSpotlight
                 item={spotlightEntry.item}
@@ -483,11 +606,11 @@ export default function App() {
                   {activeTab === 'all'
                     ? 'Local Media Library'
                     : activeTab === 'anime'
-                    ? 'Anime Collection'
+                    ? 'Anime Collection (AniList)'
                     : activeTab === 'tv'
-                    ? 'TV Shows'
+                    ? 'TV Shows (TMDB)'
                     : activeTab === 'movies'
-                    ? 'Movies & Films'
+                    ? 'Movies & Films (TMDB)'
                     : activeTab === 'other'
                     ? 'Other Videos'
                     : 'Personal Watchlist'}
@@ -538,7 +661,7 @@ export default function App() {
                     No Matching Media Found
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                    No movies, anime, or series match your current category or filter selection. Try clearing your filters or scanning another local folder on your PC.
+                    No movies, anime, or series match your current category or filter selection. Try clearing your filters or picking another local folder on your PC.
                   </p>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button
@@ -559,7 +682,7 @@ export default function App() {
                       className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white rounded-lg transition-colors cursor-pointer"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
-                      <span>Change Local Folder</span>
+                      <span>Pick Local Folder</span>
                     </button>
                   </div>
                 </div>
@@ -577,7 +700,7 @@ export default function App() {
               CineVault Local
             </span>
             <span aria-hidden="true">·</span>
-            <span>Personal Local Media Streaming</span>
+            <span>AniList & TMDB Metadata</span>
             {capabilities && (
               <>
                 <span aria-hidden="true">·</span>
@@ -601,7 +724,7 @@ export default function App() {
               onClick={() => setShowLibrarySettings(true)}
               className="hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
             >
-              Configure Media Folder
+              Select Media Folder
             </button>
           </div>
         </div>
@@ -634,6 +757,7 @@ export default function App() {
           capabilities={capabilities}
           onClose={() => setShowLibrarySettings(false)}
           onApplyRootPath={handleApplyRootPath}
+          onPickClientFolderFiles={handlePickClientFolderFiles}
         />
       )}
 

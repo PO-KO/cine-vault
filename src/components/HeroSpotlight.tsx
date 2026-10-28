@@ -35,6 +35,14 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
       ? Math.min(100, Math.round((targetEpisode.progress.currentTime / targetEpisode.progress.duration) * 100))
       : 0;
 
+  const backdropSrc = item.bannerUrl || item.posterUrl;
+  const providerLabel =
+    item.metadataProvider === 'anilist'
+      ? 'AniList'
+      : item.metadataProvider === 'tmdb'
+      ? 'TMDB'
+      : 'Local';
+
   return (
     <section
       aria-label="Featured Media Spotlight"
@@ -43,18 +51,18 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
       {/* Background visual layer with measured contrast scrim */}
       <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-rose-950/60" />
 
-      {!imgError && item.posterUrl && (
+      {!imgError && backdropSrc && (
         <img
-          src={item.posterUrl}
+          src={backdropSrc}
           alt={item.title}
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
-          className="absolute right-0 top-0 h-full w-full md:w-3/5 object-cover opacity-35 md:opacity-45 select-none pointer-events-none"
+          className="absolute right-0 top-0 h-full w-full md:w-3/4 object-cover opacity-40 md:opacity-50 select-none pointer-events-none"
         />
       )}
 
       {/* Measured contrast scrim */}
-      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/75 to-slate-950/30 md:bg-gradient-to-r md:from-slate-950 md:via-slate-950/85 md:to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-slate-950/30 md:bg-gradient-to-r md:from-slate-950 md:via-slate-950/90 md:to-slate-950/25" />
 
       <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 items-stretch gap-6 p-6 sm:p-8 lg:p-10">
         {/* Left Content Column */}
@@ -62,21 +70,31 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
           <div className="space-y-3">
             {/* Unboxed metadata kicker (Zero-Pill discipline) */}
             <div className={`flex flex-wrap items-center gap-2 text-rose-400 font-medium ${tvMode ? 'text-sm' : 'text-xs'}`}>
-              <span>{hasProgress ? 'Continue Watching' : 'Featured in Local Library'}</span>
+              <span>{hasProgress ? 'Continue Watching' : 'Featured in Library'}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-slate-300">{formatCategoryLabel(item.category)}</span>
+              <span className="text-slate-200">{formatCategoryLabel(item.category)}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-slate-300">{item.releaseYear}</span>
+              <span className="text-slate-300 font-mono tabular-nums">{item.releaseYear}</span>
+              {typeof item.ratingScore === 'number' && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-emerald-400 font-mono tabular-nums">
+                    {item.ratingScore}% {providerLabel} Score
+                  </span>
+                </>
+              )}
+              {item.studioOrNetwork && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-slate-300">{item.studioOrNetwork}</span>
+                </>
+              )}
               <span aria-hidden="true">·</span>
               <span className="text-slate-300 font-mono tabular-nums">
                 {item.autoType === 'series'
                   ? `${item.totalEpisodes} ${item.totalEpisodes === 1 ? 'Episode' : 'Episodes'}`
                   : formatDurationHuman(targetEpisode.estimatedDurationSec)}
               </span>
-              <span aria-hidden="true">·</span>
-              <span className="text-slate-300 font-mono uppercase">{targetEpisode.containerFormat}</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-slate-300 font-mono">{targetEpisode.resolutionLabel}</span>
             </div>
 
             <h1
@@ -87,7 +105,23 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
               {item.title}
             </h1>
 
-            <p className={`text-slate-300 max-w-2xl leading-relaxed ${tvMode ? 'text-base sm:text-lg' : 'text-sm sm:text-base'}`}>
+            {/* Genres as quiet unboxed inline text */}
+            {item.genres && item.genres.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                {item.genres.map((g, idx) => (
+                  <React.Fragment key={g}>
+                    {idx > 0 && <span aria-hidden="true">·</span>}
+                    <span>{g}</span>
+                  </React.Fragment>
+                ))}
+                <span aria-hidden="true">·</span>
+                <span className="font-mono uppercase text-slate-400">{targetEpisode.containerFormat}</span>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono text-slate-400">{targetEpisode.resolutionLabel}</span>
+              </div>
+            )}
+
+            <p className={`text-slate-300 max-w-2xl leading-relaxed line-clamp-3 ${tvMode ? 'text-base sm:text-lg' : 'text-sm sm:text-base'}`}>
               {item.synopsis}
             </p>
           </div>
@@ -182,7 +216,7 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
                 }`}
               >
                 <Edit3 className="w-4 h-4" />
-                <span>Edit Info</span>
+                <span>Match AniList / TMDB</span>
               </button>
             </div>
           </div>
@@ -190,7 +224,7 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
 
         {/* Right Poster Preview on Desktop */}
         <div className="hidden lg:flex lg:col-span-4 justify-end items-center">
-          <div className="w-48 xl:w-52 aspect-[3/4] rounded-xl overflow-hidden border border-slate-700/80 bg-slate-900 relative">
+          <div className="w-48 xl:w-52 aspect-[3/4] rounded-xl overflow-hidden border border-slate-700/80 bg-slate-900 relative shadow-2xl">
             {!imgError && item.posterUrl ? (
               <img
                 src={item.posterUrl}

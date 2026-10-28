@@ -90,9 +90,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       return;
     }
 
-    const customFound = customSubtitles.find((s) => s.id === activeSubId);
-    if (customFound?.rawContent) {
-      setParsedCues(parseVttOrSrtCues(customFound.rawContent));
+    const inlineTrack = allSubtitles.find((s) => s.id === activeSubId);
+    if (inlineTrack?.rawContent) {
+      setParsedCues(parseVttOrSrtCues(inlineTrack.rawContent));
       return;
     }
 
@@ -111,7 +111,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeSubId, episode.id, customSubtitles]);
+  }, [activeSubId, episode.id, allSubtitles]);
 
   // Active subtitle cue for current timestamp (loops sample cues every 28s for synthetic demo files so subtitles are always visible at any scrub point)
   const activeSubtitleText = useMemo(() => {
@@ -444,9 +444,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     reader.readAsText(file);
   };
 
-  const streamUrl = `/api/stream/${episode.id}?audioTrack=${activeAudioTrackIdx}&remux=${
-    episode.requiresRemux ? '1' : '0'
-  }`;
+  const streamUrl =
+    episode.clientBlobUrl ||
+    `/api/stream/${episode.id}?audioTrack=${activeAudioTrackIdx}&remux=${
+      episode.requiresRemux ? '1' : '0'
+    }`;
 
   return (
     <div

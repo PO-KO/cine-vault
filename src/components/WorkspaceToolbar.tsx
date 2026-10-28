@@ -1,5 +1,5 @@
-import React from 'react';
-import { Search, X, Sun, Moon, Tv, RefreshCw, Keyboard } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { Search, X, Sun, Moon, Tv, RefreshCw, Keyboard, FolderPlus } from 'lucide-react';
 import { WatchedFilter } from '../types/media';
 import { NavTab } from './TopNav';
 
@@ -15,6 +15,7 @@ interface WorkspaceToolbarProps {
   tvMode: boolean;
   onToggleTvMode: () => void;
   onRescan: () => void;
+  onPickClientFolderFiles: (files: FileList) => void;
   isScanning: boolean;
   onOpenShortcutsHelp: () => void;
   totalItemsCount: number;
@@ -33,11 +34,21 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
   tvMode,
   onToggleTvMode,
   onRescan,
+  onPickClientFolderFiles,
   isScanning,
   onOpenShortcutsHelp,
   totalItemsCount,
   filteredItemsCount,
 }) => {
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (folderInputRef.current) {
+      folderInputRef.current.setAttribute('webkitdirectory', '');
+      folderInputRef.current.setAttribute('directory', '');
+    }
+  }, []);
+
   const categoryButtons: { id: NavTab; label: string }[] = [
     { id: 'all', label: 'All' },
     { id: 'anime', label: 'Anime' },
@@ -69,7 +80,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               data-focusable="true"
-              placeholder="Search titles, folders, or formats (MKV, MP4)..."
+              placeholder="Search titles, genres, folders, or formats..."
               aria-label="Search media library"
               className={`w-full pl-10 pr-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-rose-500 transition-colors ${
                 tvMode ? 'py-2.5 text-base' : 'py-2 text-sm'
@@ -87,7 +98,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
             )}
           </div>
 
-          {/* Category segmented control (accessible on mobile, desktop & TV) */}
+          {/* Category segmented control */}
           <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-lg overflow-x-auto">
             {categoryButtons.map((btn) => {
               const active = activeTab === btn.id;
@@ -97,7 +108,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
                   type="button"
                   data-focusable="true"
                   onClick={() => onSelectTab(btn.id)}
-                  className={`px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  className={`px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     tvMode ? 'text-sm' : 'text-xs'
                   } ${
                     active
@@ -112,7 +123,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
           </div>
         </div>
 
-        {/* Right: Watched Status Filter + Device / Theme Controls */}
+        {/* Right: Watched Status Filter + Pick Folder + Device / Theme Controls */}
         <div className="flex flex-wrap items-center justify-between lg:justify-end gap-2.5">
           {/* Watched filter */}
           <div className="flex items-center gap-1 p-1 bg-slate-200/70 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-lg overflow-x-auto">
@@ -124,7 +135,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
                   type="button"
                   data-focusable="true"
                   onClick={() => onSelectWatchedFilter(wb.id)}
-                  className={`px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  className={`px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     tvMode ? 'text-sm' : 'text-xs'
                   } ${
                     active
@@ -139,10 +150,34 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Count indicator in clean unboxed text */}
             <span className="hidden xl:inline-block text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums px-1 whitespace-nowrap">
               {filteredItemsCount} of {totalItemsCount} items
             </span>
+
+            {/* Native OS Folder Picker Button */}
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  onPickClientFolderFiles(e.target.files);
+                  e.target.value = '';
+                }
+              }}
+              className="hidden"
+            />
+            <button
+              type="button"
+              data-focusable="true"
+              onClick={() => folderInputRef.current?.click()}
+              disabled={isScanning}
+              title="Open native OS folder picker to load local media from your PC"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-lg hover:bg-rose-500/20 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              <span>Pick PC Folder</span>
+            </button>
 
             {/* Re-scan folder button */}
             <button
@@ -150,8 +185,8 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
               data-focusable="true"
               onClick={onRescan}
               disabled={isScanning}
-              title="Re-scan Local Media Folder"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              title="Re-scan Server Media Folder"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-rose-500' : ''}`} />
               <span>{isScanning ? 'Scanning...' : 'Scan'}</span>
@@ -163,7 +198,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
               data-focusable="true"
               onClick={onToggleTvMode}
               title="Toggle Smart TV Large-Screen UI & Remote D-Pad Mode"
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 tvMode
                   ? 'bg-rose-600 border-rose-600 text-white'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -179,7 +214,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
               data-focusable="true"
               onClick={onOpenShortcutsHelp}
               title="Keyboard, Touch & Smart TV Remote Controls"
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Keyboard className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Controls</span>
@@ -191,7 +226,7 @@ export const WorkspaceToolbar: React.FC<WorkspaceToolbarProps> = ({
               data-focusable="true"
               onClick={onToggleDarkMode}
               aria-label={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               {darkMode ? (
                 <>

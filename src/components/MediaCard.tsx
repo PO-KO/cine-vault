@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Play, Bookmark, Edit3, ListVideo, CheckCircle2, Film } from 'lucide-react';
 import { MediaEpisode, MediaItem } from '../types/media';
 import { formatCategoryLabel, formatRemainingTime, formatTimecode } from '../utils/formatters';
@@ -23,6 +23,10 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   tvMode,
 }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [item.posterUrl]);
 
   const primaryEpisode = item.inProgressEpisode || item.episodes[0];
   const hasProgress = Boolean(
@@ -59,7 +63,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         {/* Measured bottom contrast scrim for playback controls & progress bar */}
         <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-slate-950/95 via-slate-950/50 to-transparent pointer-events-none" />
 
-        {/* Primary Play Overlay Button (Accessible via Keyboard, TV Remote, Touch, and Mouse) */}
+        {/* Primary Play Overlay Button */}
         <button
           type="button"
           data-focusable="true"
@@ -94,28 +98,30 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         )}
       </div>
 
-      {/* Card Body — Zero-Pill Discipline: leads directly with quiet inline text & primary title */}
+      {/* Card Body — Zero-Pill Discipline */}
       <div className="flex-1 flex flex-col justify-between p-4 space-y-3">
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           {/* Unboxed metadata row with middle-dot separators */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
             <span className="font-sans font-medium text-rose-600 dark:text-rose-400">
               {formatCategoryLabel(item.category)}
             </span>
             <span aria-hidden="true">·</span>
+            <span>{item.releaseYear}</span>
+            {typeof item.ratingScore === 'number' && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                  {item.ratingScore}%
+                </span>
+              </>
+            )}
+            <span aria-hidden="true">·</span>
             <span>
               {item.autoType === 'series'
                 ? `${item.totalEpisodes} ${item.totalEpisodes === 1 ? 'Ep' : 'Eps'}`
                 : primaryEpisode?.containerFormat.toUpperCase() || 'MP4'}
             </span>
-            {item.autoType === 'series' && item.watchedEpisodes > 0 && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="text-emerald-600 dark:text-emerald-400">
-                  {item.watchedEpisodes}/{item.totalEpisodes} watched
-                </span>
-              </>
-            )}
             {item.autoType === 'movie' && isAllWatched && (
               <>
                 <span aria-hidden="true">·</span>
@@ -134,13 +140,20 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             {item.title}
           </h3>
 
-          {/* Subtitle / Folder Path info */}
+          {/* Genres line (unboxed inline text with · separators) */}
+          {item.genres && item.genres.length > 0 && (
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              {item.genres.slice(0, 3).join(' · ')}
+            </p>
+          )}
+
+          {/* Story / Synopsis */}
           <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
             {item.synopsis}
           </p>
         </div>
 
-        {/* Action Toolbar — Touch (>=40px), Mouse & Smart TV Remote friendly */}
+        {/* Action Toolbar */}
         <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-1.5">
           <button
             type="button"
@@ -205,7 +218,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             type="button"
             data-focusable="true"
             onClick={() => onOpenEdit(item)}
-            title="Edit Title, Category & Custom Poster"
+            title="Match AniList / TMDB or Edit Metadata"
             aria-label={`Edit ${item.title}`}
             className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
           >

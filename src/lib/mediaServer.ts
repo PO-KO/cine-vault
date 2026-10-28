@@ -3,7 +3,8 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
-import { MediaCategory } from '../types/media';
+import { ExternalMetadataMatch, MediaCategory, MediaItem } from '../types/media';
+import { autoResolveMetadataForTitle } from './metadataProviders';
 
 const WORKSPACE_ROOT = process.cwd();
 export const DEFAULT_SAMPLE_ROOT = path.resolve(WORKSPACE_ROOT, 'local-media');
@@ -29,6 +30,7 @@ export interface PersistedState {
   customTitles: Record<string, string>;
   customSynopses: Record<string, string>;
   customPosters: Record<string, string>;
+  externalMetadataCache: Record<string, ExternalMetadataMatch>;
   episodeProgress: Record<
     string,
     {
@@ -81,86 +83,6 @@ function checkFfmpeg(): Promise<void> {
   });
 }
 
-function createPosterSvg(
-  title: string,
-  subtitle: string,
-  accentA: string,
-  accentB: string,
-  bgDark: string,
-  motif: 'mecha' | 'sky' | 'lighthouse' | 'planet' | 'torii' | 'camera'
-): string {
-  let motifSvg = '';
-  if (motif === 'mecha') {
-    motifSvg = `
-      <circle cx="300" cy="290" r="145" fill="url(#glow)" opacity="0.55" />
-      <path d="M180 480 L250 240 L300 290 L350 240 L420 480 Z" fill="${accentA}" opacity="0.22" />
-      <path d="M220 440 L300 190 L380 440 L300 370 Z" fill="none" stroke="${accentA}" stroke-width="3" />
-      <line x1="120" y1="320" x2="480" y2="320" stroke="${accentB}" stroke-width="1.5" stroke-dasharray="8 6" opacity="0.6" />
-      <rect x="275" y="255" width="50" height="14" rx="7" fill="${accentB}" />
-    `;
-  } else if (motif === 'sky') {
-    motifSvg = `
-      <circle cx="300" cy="250" r="130" fill="url(#glow)" opacity="0.5" />
-      <path d="M110 380 Q300 260 490 380 L430 430 Q300 350 170 430 Z" fill="${accentA}" opacity="0.28" />
-      <path d="M190 260 Q300 170 410 260" fill="none" stroke="${accentB}" stroke-width="3" />
-      <circle cx="300" cy="220" r="36" fill="${accentB}" opacity="0.7" />
-    `;
-  } else if (motif === 'lighthouse') {
-    motifSvg = `
-      <polygon points="300,190 80,110 80,270" fill="url(#glow)" opacity="0.45" />
-      <polygon points="300,190 520,110 520,270" fill="url(#glow)" opacity="0.45" />
-      <path d="M275 470 L288 180 L312 180 L325 470 Z" fill="${accentA}" opacity="0.4" stroke="${accentB}" stroke-width="2" />
-      <circle cx="300" cy="190" r="14" fill="${accentB}" />
-    `;
-  } else if (motif === 'planet') {
-    motifSvg = `
-      <circle cx="300" cy="285" r="115" fill="${accentA}" opacity="0.3" stroke="${accentB}" stroke-width="2" />
-      <ellipse cx="300" cy="285" rx="195" ry="44" fill="none" stroke="${accentB}" stroke-width="3" transform="rotate(-18 300 285)" />
-      <circle cx="410" cy="175" r="12" fill="${accentB}" />
-    `;
-  } else if (motif === 'torii') {
-    motifSvg = `
-      <circle cx="300" cy="295" r="125" fill="${accentA}" opacity="0.35" />
-      <path d="M160 220 Q300 190 440 220" fill="none" stroke="${accentB}" stroke-width="8" stroke-linecap="round" />
-      <line x1="190" y1="265" x2="410" y2="265" stroke="${accentB}" stroke-width="5" />
-      <line x1="225" y1="220" x2="215" y2="450" stroke="${accentB}" stroke-width="7" />
-      <line x1="375" y1="220" x2="385" y2="450" stroke="${accentB}" stroke-width="7" />
-    `;
-  } else {
-    motifSvg = `
-      <rect x="170" y="200" width="260" height="170" rx="16" fill="none" stroke="${accentB}" stroke-width="3" />
-      <circle cx="300" cy="285" r="52" fill="${accentA}" opacity="0.35" stroke="${accentB}" stroke-width="3" />
-      <circle cx="300" cy="285" r="18" fill="${accentB}" />
-    `;
-  }
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" width="600" height="800">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="${bgDark}" />
-      <stop offset="55%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#020617" />
-    </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="${accentA}" stop-opacity="0.9" />
-      <stop offset="100%" stop-color="${accentA}" stop-opacity="0" />
-    </radialGradient>
-  </defs>
-  <rect width="600" height="800" fill="url(#bg)" />
-  <g opacity="0.15">
-    <line x1="0" y1="160" x2="600" y2="160" stroke="#94a3b8" stroke-width="1" />
-    <line x1="0" y1="480" x2="600" y2="480" stroke="#94a3b8" stroke-width="1" />
-    <line x1="150" y1="0" x2="150" y2="800" stroke="#94a3b8" stroke-width="1" />
-    <line x1="450" y1="0" x2="450" y2="800" stroke="#94a3b8" stroke-width="1" />
-  </g>
-  ${motifSvg}
-  <rect x="0" y="500" width="600" height="300" fill="url(#bg)" opacity="0.88" />
-  <text x="48" y="625" fill="${accentB}" font-family="sans-serif" font-size="16" font-weight="600" letter-spacing="3">${subtitle.toUpperCase()}</text>
-  <text x="48" y="675" fill="#f8fafc" font-family="sans-serif" font-size="36" font-weight="700">${title}</text>
-</svg>`;
-}
-
 export function bootstrapSampleMediaDirectory(): void {
   if (!fs.existsSync(DEFAULT_SAMPLE_ROOT)) {
     fs.mkdirSync(DEFAULT_SAMPLE_ROOT, { recursive: true });
@@ -179,168 +101,153 @@ export function bootstrapSampleMediaDirectory(): void {
     }
   };
 
+  // Clean up old synthetic demo names if present so real AniList/TMDB sample titles appear cleanly
+  const legacyFolders = [
+    'Chrono Vanguard - Neon Eclipse [Anime]',
+    'Aethelgard - Spirit of the Wind',
+    'Northern Harbor - Cold Case',
+    'Solaris Drift (2025)',
+    'Echoes of Kyoto (2024)',
+  ];
+  for (const oldName of legacyFolders) {
+    const oldPath = path.join(DEFAULT_SAMPLE_ROOT, oldName);
+    if (fs.existsSync(oldPath)) {
+      try {
+        fs.rmSync(oldPath, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // 1. Anime Series (AniList): Sousou no Frieren [Anime]
   writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/poster.svg',
-    createPosterSvg('Chrono Vanguard', 'Anime Series · Sci-Fi Mecha', '#e11d48', '#fb7185', '#1e1b4b', 'mecha')
-  );
-  writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 1/Chrono Vanguard - S01E01 - Awakening Protocol [1080p].mp4',
+    'Sousou no Frieren [Anime]/Season 1/Sousou no Frieren - S01E01 - The Journey Begins [1080p].mp4',
     samplePlaceholderHeader
   );
   writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 1/Chrono Vanguard - S01E01 - Awakening Protocol [1080p].en.srt',
+    'Sousou no Frieren [Anime]/Season 1/Sousou no Frieren - S01E01 - The Journey Begins [1080p].en.srt',
     `1
-00:00:00,500 --> 00:00:04,500
-[Sector 7 Orbital Elevator — 2149 AD]
-All telemetry channels are locked onto the Eclipse core.
+00:00:00,500 --> 00:00:05,000
+The Demon King has been defeated, and the victorious hero party returns home.
 
 2
-00:00:04,800 --> 00:00:09,200
-Commander Ren, the neural synchronization rate just passed 98 percent!
+00:00:05,400 --> 00:00:10,500
+Fifty years pass in the blink of an eye for an elven mage.
 
 3
-00:00:09,500 --> 00:00:14,000
-Release the electromagnetic clamps. Vanguard Unit-01 is cleared for launch.
-
-4
-00:00:14,500 --> 00:00:19,500
-If the temporal rift expands any further, Neo-Tokyo won't survive the night.
-
-5
-00:00:20,000 --> 00:00:26,000
-Initiating Awakening Protocol. Engage auxiliary thrusters on my mark!`
+00:00:11,000 --> 00:00:16,500
+I want to understand the humans I traveled alongside before their memories fade.`
   );
   writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 1/Chrono Vanguard - S01E01 - Awakening Protocol [1080p].ja.srt',
+    'Sousou no Frieren [Anime]/Season 1/Sousou no Frieren - S01E01 - The Journey Begins [1080p].ja.srt',
     `1
-00:00:00,500 --> 00:00:04,500
-[第7軌道エレベーター — 西暦2149年]
-全テレメトリチャンネル、エクリプス・コアを捕捉。
+00:00:00,500 --> 00:00:05,000
+魔王を倒した勇者一行が王都へと凱旋した。
 
 2
-00:00:04,800 --> 00:00:09,200
-レン司令官、神経同調率が98%を超えました！
-
-3
-00:00:09,500 --> 00:00:14,000
-電磁クランプ解除。ヴァンガード初号機、発進準備完了。`
+00:00:05,400 --> 00:00:10,500
+エルフであるフリーレンにとって、50年の歳月はほんの一瞬だった。`
   );
   writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 1/Chrono Vanguard - S01E02 - Orbital Resonance [1080p].mp4',
+    'Sousou no Frieren [Anime]/Season 1/Sousou no Frieren - S01E02 - It Did Not Have to Be Magic [1080p].mp4',
     samplePlaceholderHeader
   );
   writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 1/Chrono Vanguard - S01E02 - Orbital Resonance [1080p].en.srt',
+    'Sousou no Frieren [Anime]/Season 1/Sousou no Frieren - S01E03 - Killing Magic [1080p].mkv',
+    samplePlaceholderHeader
+  );
+
+  // 2. Anime Series (AniList): Cowboy Bebop [Anime]
+  writeSampleFile(
+    'Cowboy Bebop [Anime]/Season 1/Cowboy Bebop - S01E01 - Asteroid Blues [1080p].mkv',
+    samplePlaceholderHeader
+  );
+  writeSampleFile(
+    'Cowboy Bebop [Anime]/Season 1/Cowboy Bebop - S01E01 - Asteroid Blues [1080p].en.srt',
     `1
 00:00:00,500 --> 00:00:05,000
-[Episode 02 — Orbital Resonance]
-We've reached low-earth orbit, but the resonance wave is still echoing.`
+[Bebop Deck — 2071 AD]
+Three, two, one... let's jam.
+
+2
+00:00:05,500 --> 00:00:11,000
+Jet, the bounty on Tijuana asteroid just doubled.`
   );
   writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 1/Chrono Vanguard - S01E03 - Crimson Horizon [1080p].mkv',
-    samplePlaceholderHeader
-  );
-  writeSampleFile(
-    'Chrono Vanguard - Neon Eclipse [Anime]/Season 2/Chrono Vanguard - S02E01 - Zero Point Singularity [1080p].mkv',
+    'Cowboy Bebop [Anime]/Season 1/Cowboy Bebop - S01E02 - Stray Dog Strut [1080p].mp4',
     samplePlaceholderHeader
   );
 
+  // 3. Anime Film (AniList): Spirited Away (2001) [Anime]
   writeSampleFile(
-    'Aethelgard - Spirit of the Wind/poster.svg',
-    createPosterSvg('Aethelgard', 'Anime Fantasy · Adventure', '#059669', '#34d399', '#064e3b', 'sky')
-  );
-  writeSampleFile(
-    'Aethelgard - Spirit of the Wind/Season 1/Aethelgard - S01E01 - The Floating Isles.mp4',
+    'Spirited Away (2001) [Anime]/Spirited Away (2001) [1080p BluRay].mp4',
     samplePlaceholderHeader
   );
   writeSampleFile(
-    'Aethelgard - Spirit of the Wind/Season 1/Aethelgard - S01E01 - The Floating Isles.en.vtt',
-    `WEBVTT
-
-00:00:00.500 --> 00:00:05.000
-For centuries, the wind currents carried our archipelago above the cloud sea.
-
-00:00:05.400 --> 00:00:10.500
-Listen closely—the ancient wind bells are ringing across the eastern spire.`
-  );
-  writeSampleFile(
-    'Aethelgard - Spirit of the Wind/Season 1/Aethelgard - S01E02 - Skyward Oath.mp4',
-    samplePlaceholderHeader
-  );
-
-  writeSampleFile(
-    'Northern Harbor - Cold Case/poster.svg',
-    createPosterSvg('Northern Harbor', 'TV Series · Mystery Thriller', '#0284c7', '#38bdf8', '#0c4a6e', 'lighthouse')
-  );
-  writeSampleFile(
-    'Northern Harbor - Cold Case/Season 1/Northern Harbor - S01E01 - The Lighthouse Keeper.mp4',
-    samplePlaceholderHeader
-  );
-  writeSampleFile(
-    'Northern Harbor - Cold Case/Season 1/Northern Harbor - S01E01 - The Lighthouse Keeper.en.srt',
-    `1
-00:00:00,500 --> 00:00:05,200
-[Bergen Fjord Precinct — 05:40 AM]
-The harbor fog rolled in three hours before the trawler ran aground.`
-  );
-  writeSampleFile(
-    'Northern Harbor - Cold Case/Season 1/Northern Harbor - S01E02 - Beneath the Fog.mp4',
-    samplePlaceholderHeader
-  );
-  writeSampleFile(
-    'Northern Harbor - Cold Case/Season 1/Northern Harbor - S01E03 - Winter Tide.avi',
-    samplePlaceholderHeader
-  );
-
-  writeSampleFile(
-    'Solaris Drift (2025)/poster.svg',
-    createPosterSvg('Solaris Drift', 'Feature Film · 2025 · 4K HDR', '#d97706', '#fbbf24', '#451a03', 'planet')
-  );
-  writeSampleFile(
-    'Solaris Drift (2025)/Solaris Drift (2025) [4K Remux].mkv',
-    samplePlaceholderHeader
-  );
-  writeSampleFile(
-    'Solaris Drift (2025)/Solaris Drift (2025) [4K Remux].en.srt',
-    `1
-00:00:00,500 --> 00:00:05,000
-[Deep Space Vessel Helios — Day 412]
-Orbital insertion around Kepler-442b complete.`
-  );
-  writeSampleFile(
-    'Solaris Drift (2025)/Solaris Drift (2025) [4K Remux].fr.srt',
-    `1
-00:00:00,500 --> 00:00:05,000
-[Vaisseau Spatial Hélios — Jour 412]
-Insertion orbitale autour de Kepler-442b terminée.`
-  );
-
-  writeSampleFile(
-    'Echoes of Kyoto (2024)/poster.svg',
-    createPosterSvg('Echoes of Kyoto', 'Documentary Film · 2024', '#dc2626', '#f87171', '#450a0a', 'torii')
-  );
-  writeSampleFile(
-    'Echoes of Kyoto (2024)/Echoes of Kyoto (2024) [1080p].webm',
-    samplePlaceholderHeader
-  );
-  writeSampleFile(
-    'Echoes of Kyoto (2024)/Echoes of Kyoto (2024) [1080p].en.vtt',
+    'Spirited Away (2001) [Anime]/Spirited Away (2001) [1080p BluRay].en.vtt',
     `WEBVTT
 
 00:00:00.500 --> 00:00:05.500
-At dawn in Higashiyama, the cedar temples awaken before the city below.`
+Look, Chihiro—there's an old red tunnel at the end of the forest path.
+
+00:00:06.000 --> 00:00:12.000
+Once the lanterns light up across the river, the bathhouse spirits awaken.`
   );
 
+  // 4. TV Show (TMDB): Severance
   writeSampleFile(
-    'Studio Reel - Cinematography & Lighting Breakdown.mp4',
+    'Severance/Season 1/Severance - S01E01 - Good News About Hell [1080p].mp4',
     samplePlaceholderHeader
   );
   writeSampleFile(
-    'Studio Reel - Cinematography & Lighting Breakdown.en.srt',
+    'Severance/Season 1/Severance - S01E01 - Good News About Hell [1080p].en.srt',
+    `1
+00:00:00,500 --> 00:00:05,200
+[Lumon Industries — Macrodata Refinement Floor]
+Who are you? Please state your first name and home town.
+
+2
+00:00:05,600 --> 00:00:11,000
+Your work memories have been surgically separated from your personal life.`
+  );
+  writeSampleFile(
+    'Severance/Season 1/Severance - S01E02 - Half Loop [1080p].mp4',
+    samplePlaceholderHeader
+  );
+  writeSampleFile(
+    'Severance/Season 2/Severance - S02E01 - Hello Ms Cobel [1080p].mkv',
+    samplePlaceholderHeader
+  );
+
+  // 5. Movie (TMDB): Interstellar (2014)
+  writeSampleFile(
+    'Interstellar (2014)/Interstellar (2014) [4K Remux].mkv',
+    samplePlaceholderHeader
+  );
+  writeSampleFile(
+    'Interstellar (2014)/Interstellar (2014) [4K Remux].en.srt',
+    `1
+00:00:00,500 --> 00:00:05,000
+[Endurance Orbital Dock — Saturn Approach]
+We used to look up at the sky and wonder at our place in the stars.
+
+2
+00:00:05,500 --> 00:00:11,000
+Do not go gentle into that good night.`
+  );
+
+  // 6. Movie (TMDB): Dune Part Two (2024)
+  writeSampleFile(
+    'Dune Part Two (2024)/Dune Part Two (2024) [1080p].mp4',
+    samplePlaceholderHeader
+  );
+  writeSampleFile(
+    'Dune Part Two (2024)/Dune Part Two (2024) [1080p].en.srt',
     `1
 00:00:00,500 --> 00:00:05,500
-[Cinematography Breakdown — Anamorphic Lens Test]
-Notice how the key light wraps softly across the shadow edge at T2.0.`
+[Arrakis Deep Desert — Sietch Tabr]
+Walk without rhythm and we won't attract the worm.`
   );
 }
 
@@ -356,6 +263,7 @@ export function loadState(): PersistedState {
         customTitles: parsed.customTitles || {},
         customSynopses: parsed.customSynopses || {},
         customPosters: parsed.customPosters || {},
+        externalMetadataCache: parsed.externalMetadataCache || {},
         episodeProgress: parsed.episodeProgress || {},
       };
     }
@@ -363,41 +271,41 @@ export function loadState(): PersistedState {
     console.error('Failed to read media-library-state.json:', err);
   }
 
-  const chronoMediaId = hashId('Chrono Vanguard - Neon Eclipse [Anime]');
-  const chronoEp1Id = hashId(
+  const frierenId = hashId('Sousou no Frieren [Anime]');
+  const frierenEp1Id = hashId(
     path.join(
-      'Chrono Vanguard - Neon Eclipse [Anime]',
+      'Sousou no Frieren [Anime]',
       'Season 1',
-      'Chrono Vanguard - S01E01 - Awakening Protocol [1080p].mp4'
+      'Sousou no Frieren - S01E01 - The Journey Begins [1080p].mp4'
     )
   );
-  const aethelgardId = hashId('Aethelgard - Spirit of the Wind');
-  const solarisEpId = hashId(path.join('Solaris Drift (2025)', 'Solaris Drift (2025) [4K Remux].mkv'));
+  const interstellarEpId = hashId(
+    path.join('Interstellar (2014)', 'Interstellar (2014) [4K Remux].mkv')
+  );
   const studioReelId = hashId('Studio Reel - Cinematography & Lighting Breakdown.mp4');
 
   const initial: PersistedState = {
     rootPath: DEFAULT_SAMPLE_ROOT,
     favorites: {
-      [chronoMediaId]: true,
-      [aethelgardId]: true,
+      [frierenId]: true,
     },
     manualCategories: {
-      [aethelgardId]: 'anime',
       [studioReelId]: 'other',
     },
     customTitles: {},
     customSynopses: {},
     customPosters: {},
+    externalMetadataCache: {},
     episodeProgress: {
-      [chronoEp1Id]: {
+      [frierenEp1Id]: {
         currentTime: 402,
         duration: 1440,
         completed: false,
         updatedAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
       },
-      [solarisEpId]: {
+      [interstellarEpId]: {
         currentTime: 2535,
-        duration: 7080,
+        duration: 9840,
         completed: false,
         updatedAt: new Date(Date.now() - 1000 * 60 * 180).toISOString(),
       },
@@ -425,21 +333,6 @@ export async function ensureInitialized(): Promise<PersistedState> {
   return loadState();
 }
 
-const SYNOPSES_BY_TITLE: Record<string, string> = {
-  'Chrono Vanguard - Neon Eclipse':
-    'In 2149 Neo-Tokyo, an orbital elevator test triggers a temporal anomaly. A squad of experimental mecha pilots must synchronize with ancient resonance cores to seal the rift.',
-  'Aethelgard - Spirit of the Wind':
-    'High above a boundless cloud sea, a young cartographer and a sky-ship mechanic embark on a perilous voyage to reconnect the drifting islands of Aethelgard.',
-  'Northern Harbor - Cold Case':
-    'When a century-old coastal beacon goes dark during a winter gale, two detectives uncover a decades-spanning mystery hidden beneath a quiet Norwegian fishing port.',
-  'Solaris Drift':
-    'A lone deep-space crew aboard the vessel Helios enters orbit around a frozen exoplanet, discovering an acoustic signal emanating miles beneath the glacial shelf.',
-  'Echoes of Kyoto':
-    'An intimate visual portrait of Kyoto’s traditional woodworkers, garden designers, and nocturnal lanterns across four changing seasons.',
-  'Studio Reel - Cinematography & Lighting Breakdown':
-    'Technical camera, color grading, and anamorphic lighting reference reel stored directly in the root media directory.',
-};
-
 function cleanDisplayTitle(rawName: string): {
   title: string;
   year: string;
@@ -451,7 +344,7 @@ function cleanDisplayTitle(rawName: string): {
     autoCategoryHint = 'anime';
   }
   const yearMatch = withoutExt.match(/\((\d{4})\)/);
-  const year = yearMatch ? yearMatch[1] : '2025';
+  const year = yearMatch ? yearMatch[1] : '2024';
   const cleaned = withoutExt
     .replace(/\[.*?\]/g, '')
     .replace(/\(\d{4}\)/g, '')
@@ -501,11 +394,11 @@ function pickVisualTheme(
   title: string
 ): 'cyber_anime' | 'fantasy_anime' | 'nordic_mystery' | 'scifi_cosmos' | 'kyoto_doc' | 'studio_reel' {
   const lower = title.toLowerCase();
-  if (lower.includes('chrono') || lower.includes('vanguard')) return 'cyber_anime';
-  if (lower.includes('aethelgard') || lower.includes('wind')) return 'fantasy_anime';
-  if (lower.includes('harbor') || lower.includes('cold')) return 'nordic_mystery';
-  if (lower.includes('solaris') || lower.includes('drift')) return 'scifi_cosmos';
-  if (lower.includes('kyoto') || lower.includes('echoes')) return 'kyoto_doc';
+  if (lower.includes('cowboy') || lower.includes('bebop') || lower.includes('chrono')) return 'cyber_anime';
+  if (lower.includes('frieren') || lower.includes('spirited') || lower.includes('aethelgard')) return 'fantasy_anime';
+  if (lower.includes('severance') || lower.includes('harbor')) return 'nordic_mystery';
+  if (lower.includes('interstellar') || lower.includes('dune') || lower.includes('solaris')) return 'scifi_cosmos';
+  if (lower.includes('kyoto')) return 'kyoto_doc';
   return 'studio_reel';
 }
 
@@ -605,7 +498,10 @@ function checkIsSyntheticFile(fullPath: string): boolean {
   return false;
 }
 
-export function scanLibrary(state: PersistedState) {
+export function scanLibrary(state: PersistedState): {
+  items: MediaItem[];
+  totalFilesScanned: number;
+} {
   const rootPath = state.rootPath;
   episodePathRegistry.clear();
   artworkPathRegistry.clear();
@@ -623,7 +519,7 @@ export function scanLibrary(state: PersistedState) {
     return { items: [], totalFilesScanned: 0 };
   }
 
-  const items = [];
+  const items: MediaItem[] = [];
   let totalFilesScanned = 0;
 
   for (const entry of topEntries) {
@@ -647,7 +543,8 @@ export function scanLibrary(state: PersistedState) {
     totalFilesScanned += videoFiles.length;
 
     const { title: parsedTitle, year, autoCategoryHint } = cleanDisplayTitle(entry.name);
-    const displayTitle = state.customTitles[mediaId] || parsedTitle;
+    const cachedMeta = state.externalMetadataCache?.[mediaId];
+    const displayTitle = state.customTitles[mediaId] || cachedMeta?.title || parsedTitle;
     const visualTheme = pickVisualTheme(parsedTitle);
 
     const hasSeasonFolder = videoFiles.some((vf) =>
@@ -673,6 +570,9 @@ export function scanLibrary(state: PersistedState) {
         }
       }
     }
+    if (cachedMeta?.posterUrl) {
+      posterUrl = cachedMeta.posterUrl;
+    }
     if (state.customPosters[mediaId]) {
       posterUrl = state.customPosters[mediaId];
     }
@@ -695,7 +595,7 @@ export function scanLibrary(state: PersistedState) {
         statSize = 0;
       }
 
-      const estimatedDurationSec = autoType === 'movie' ? 7080 : 1440;
+      const estimatedDurationSec = autoType === 'movie' ? 9840 : 1440;
       const savedProgress = state.episodeProgress[epId] || {
         currentTime: 0,
         duration: estimatedDurationSec,
@@ -782,7 +682,7 @@ export function scanLibrary(state: PersistedState) {
       inProgressEpisode?.progress.updatedAt || episodes.find((e) => e.progress.updatedAt)?.progress.updatedAt;
 
     const defaultSynopsis =
-      SYNOPSES_BY_TITLE[parsedTitle] ||
+      cachedMeta?.synopsis ||
       `Local ${autoType === 'series' ? 'multi-episode series' : 'video file'} located in "${relEntryPath}" (${
         episodes.length
       } ${episodes.length === 1 ? 'file' : 'episodes'}).`;
@@ -794,12 +694,18 @@ export function scanLibrary(state: PersistedState) {
       title: displayTitle,
       originalTitle: parsedTitle,
       synopsis: state.customSynopses[mediaId] || defaultSynopsis,
-      releaseYear: year,
+      releaseYear: cachedMeta?.releaseYear || year,
       autoType,
       category,
       isManualCategory,
       posterUrl,
+      bannerUrl: cachedMeta?.bannerUrl || posterUrl,
       customPosterUrl: state.customPosters[mediaId] || '',
+      genres: cachedMeta?.genres || [category === 'anime' ? 'Anime' : category === 'tv' ? 'TV Series' : 'Movie'],
+      ratingScore: cachedMeta?.ratingScore,
+      studioOrNetwork: cachedMeta?.studioOrNetwork,
+      metadataProvider: cachedMeta?.provider || 'local',
+      externalId: cachedMeta?.externalId,
       isFavorite: Boolean(state.favorites[mediaId]),
       episodes,
       totalEpisodes: episodes.length,
@@ -812,12 +718,45 @@ export function scanLibrary(state: PersistedState) {
   return { items, totalFilesScanned };
 }
 
+/**
+ * Scans the library and automatically fetches AniList (for Anime) and TMDB (for Movies & TV Shows)
+ * metadata for any uncached items, saving the enriched posters, stories, genres, and scores to disk.
+ */
+export async function scanLibraryWithMetadata(state: PersistedState) {
+  const initialScan = scanLibrary(state);
+  let stateUpdated = false;
+
+  await Promise.all(
+    initialScan.items.map(async (item) => {
+      if (item.category === 'other') return;
+      const existingCache = state.externalMetadataCache?.[item.id];
+      if (existingCache && existingCache.posterUrl) return;
+
+      const resolved = await autoResolveMetadataForTitle(item.originalTitle, item.category);
+      if (resolved) {
+        if (!state.externalMetadataCache) state.externalMetadataCache = {};
+        state.externalMetadataCache[item.id] = resolved;
+        stateUpdated = true;
+      }
+    })
+  );
+
+  if (stateUpdated) {
+    saveState(state);
+    return scanLibrary(state);
+  }
+
+  return initialScan;
+}
+
 export function buildCapabilities(state: PersistedState, totalFilesScanned: number) {
+  const tmdbKey = (process.env.TMDB_API_KEY || '').trim();
   return {
     rootPath: state.rootPath,
     defaultSamplePath: DEFAULT_SAMPLE_ROOT,
     ffmpegAvailable,
     ffmpegVersion,
+    tmdbConfigured: Boolean(tmdbKey && tmdbKey !== 'MY_TMDB_API_KEY'),
     platform: `${os.type()} ${os.release()} (${os.arch()})`,
     hostname: os.hostname(),
     supportedContainers: ['mp4', 'webm', 'mkv', 'avi', 'mov'],
