@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Play, Bookmark, Edit3, ListVideo, CheckCircle2, Film } from 'lucide-react';
-import { MediaEpisode, MediaItem } from '../types/media';
+import { Play, Bookmark, Edit3, ListVideo, CheckCircle2, Film, FolderOpen } from 'lucide-react';
+import { MediaEpisode, MediaItem, ViewLayout } from '../types/media';
 import { formatCategoryLabel, formatRemainingTime, formatTimecode } from '../utils/formatters';
 
 interface MediaCardProps {
@@ -11,6 +11,7 @@ interface MediaCardProps {
   onOpenEdit: (item: MediaItem) => void;
   onToggleWatched: (episode: MediaEpisode, completed: boolean) => void;
   tvMode: boolean;
+  viewLayout?: ViewLayout;
 }
 
 export const MediaCard: React.FC<MediaCardProps> = ({
@@ -21,6 +22,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   onOpenEdit,
   onToggleWatched,
   tvMode,
+  viewLayout = 'grid',
 }) => {
   const [imgError, setImgError] = useState(false);
 
@@ -29,14 +31,143 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   }, [item.posterUrl]);
 
   const primaryEpisode = item.inProgressEpisode || item.episodes[0];
+  const isEmptyFolder = item.totalEpisodes === 0;
   const hasProgress = Boolean(
     primaryEpisode && primaryEpisode.progress.currentTime > 0 && !primaryEpisode.progress.completed
   );
   const isAllWatched = item.totalEpisodes > 0 && item.watchedEpisodes === item.totalEpisodes;
+  const watchingStatusLabel =
+    item.watchingStatus || (isAllWatched ? 'Completed' : hasProgress || item.watchedEpisodes > 0 ? 'Watching' : 'Unwatched');
+
   const progressPercent =
     primaryEpisode && primaryEpisode.progress.duration > 0
       ? Math.min(100, Math.round((primaryEpisode.progress.currentTime / primaryEpisode.progress.duration) * 100))
       : 0;
+
+  if (viewLayout === 'compact') {
+    return (
+      <article className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/90 hover:border-rose-500/40 transition-colors">
+        <div className="flex items-center gap-4 min-w-0 flex-1">
+          <div className="relative w-14 h-20 rounded-lg bg-slate-900 overflow-hidden shrink-0">
+            {!imgError && item.posterUrl ? (
+              <img
+                src={item.posterUrl}
+                alt={item.title}
+                referrerPolicy="no-referrer"
+                onError={() => setImgError(true)}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-slate-800">
+                <Film className="w-5 h-5 text-rose-500" />
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+              <span className="font-sans font-medium text-rose-600 dark:text-rose-400">
+                {formatCategoryLabel(item.category)}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>{item.releaseYear}</span>
+              <span aria-hidden="true">·</span>
+              <span
+                className={
+                  watchingStatusLabel === 'Completed'
+                    ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                    : watchingStatusLabel === 'Watching'
+                    ? 'text-amber-600 dark:text-amber-400 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400'
+                }
+              >
+                {watchingStatusLabel}
+              </span>
+              {!isEmptyFolder && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    {item.autoType === 'series'
+                      ? `${item.watchedEpisodes}/${item.totalEpisodes} Eps`
+                      : primaryEpisode?.containerFormat.toUpperCase() || 'MP4'}
+                  </span>
+                </>
+              )}
+            </div>
+
+            <h3 className="font-display font-semibold text-base text-slate-900 dark:text-slate-100 truncate">
+              {item.title}
+            </h3>
+
+            {hasProgress && primaryEpisode ? (
+              <div className="max-w-sm space-y-1">
+                <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                  <span>
+                    Resume at {formatTimecode(primaryEpisode.progress.currentTime)} ({progressPercent}%)
+                  </span>
+                  <span>{formatRemainingTime(primaryEpisode.progress.currentTime, primaryEpisode.progress.duration)}</span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-rose-500" style={{ width: `${progressPercent}%` }} />
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{item.synopsis}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            data-focusable="true"
+            onClick={() => {
+              if (primaryEpisode) {
+                onPlay(item, primaryEpisode);
+              } else {
+                onOpenSeries(item);
+              }
+            }}
+            className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>{hasProgress ? 'Resume' : 'Play'}</span>
+          </button>
+          {item.autoType === 'series' && primaryEpisode && (
+            <button
+              type="button"
+              data-focusable="true"
+              onClick={() => onOpenSeries(item)}
+              className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-medium inline-flex items-center gap-1 cursor-pointer"
+            >
+              <ListVideo className="w-3.5 h-3.5" />
+              <span>Eps</span>
+            </button>
+          )}
+          <button
+            type="button"
+            data-focusable="true"
+            onClick={() => onToggleFavorite(item)}
+            className={`p-2 rounded-lg border cursor-pointer ${
+              item.isFavorite
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+                : 'border-slate-200 dark:border-slate-800 text-slate-500'
+            }`}
+          >
+            <Bookmark className={`w-4 h-4 ${item.isFavorite ? 'fill-current' : ''}`} />
+          </button>
+          <button
+            type="button"
+            data-focusable="true"
+            onClick={() => onOpenEdit(item)}
+            className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-500 cursor-pointer"
+          >
+            <Edit3 className="w-4 h-4" />
+          </button>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article className="group flex flex-col rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/90 overflow-hidden transition-transform duration-150 hover:-translate-y-0.5">
@@ -63,16 +194,26 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         {/* Measured bottom contrast scrim for playback controls & progress bar */}
         <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-slate-950/95 via-slate-950/50 to-transparent pointer-events-none" />
 
-        {/* Primary Play Overlay Button */}
+        {/* Primary Play / Open Overlay Button */}
         <button
           type="button"
           data-focusable="true"
-          onClick={() => onPlay(item, primaryEpisode)}
-          aria-label={`Play ${item.title}`}
+          onClick={() => {
+            if (primaryEpisode) {
+              onPlay(item, primaryEpisode);
+            } else {
+              onOpenSeries(item);
+            }
+          }}
+          aria-label={primaryEpisode ? `Play ${item.title}` : `Open ${item.title}`}
           className="absolute inset-0 flex items-center justify-center bg-slate-950/20 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-150 cursor-pointer"
         >
           <span className="w-14 h-14 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg transform transition-transform duration-150 group-hover:scale-105">
-            <Play className="w-6 h-6 fill-current ml-0.5" />
+            {primaryEpisode ? (
+              <Play className="w-6 h-6 fill-current ml-0.5" />
+            ) : (
+              <FolderOpen className="w-6 h-6" />
+            )}
           </span>
         </button>
 
@@ -117,17 +258,31 @@ export const MediaCard: React.FC<MediaCardProps> = ({
               </>
             )}
             <span aria-hidden="true">·</span>
-            <span>
-              {item.autoType === 'series'
-                ? `${item.totalEpisodes} ${item.totalEpisodes === 1 ? 'Ep' : 'Eps'}`
-                : primaryEpisode?.containerFormat.toUpperCase() || 'MP4'}
-            </span>
-            {item.autoType === 'movie' && isAllWatched && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="text-emerald-600 dark:text-emerald-400">Watched</span>
-              </>
+            {isEmptyFolder ? (
+              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                {item.seasons && item.seasons.length > 0
+                  ? `${item.seasons.length} ${item.seasons.length === 1 ? 'Season' : 'Seasons'} (Empty)`
+                  : 'Empty Folder'}
+              </span>
+            ) : (
+              <span>
+                {item.autoType === 'series'
+                  ? `${item.watchedEpisodes}/${item.totalEpisodes} Eps`
+                  : primaryEpisode?.containerFormat.toUpperCase() || 'MP4'}
+              </span>
             )}
+            <span aria-hidden="true">·</span>
+            <span
+              className={
+                watchingStatusLabel === 'Completed'
+                  ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                  : watchingStatusLabel === 'Watching'
+                  ? 'text-amber-600 dark:text-amber-400 font-semibold'
+                  : 'text-slate-400 dark:text-slate-500'
+              }
+            >
+              {watchingStatusLabel}
+            </span>
           </div>
 
           {/* Primary Title */}
@@ -158,16 +313,35 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           <button
             type="button"
             data-focusable="true"
-            onClick={() => onPlay(item, primaryEpisode)}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            onClick={() => {
+              if (primaryEpisode) {
+                onPlay(item, primaryEpisode);
+              } else {
+                onOpenSeries(item);
+              }
+            }}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 ${
+              primaryEpisode
+                ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100'
+            } font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               tvMode ? 'py-2.5 px-3 text-sm' : 'py-2 px-3 text-xs'
             }`}
           >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>{hasProgress ? 'Resume' : 'Play'}</span>
+            {primaryEpisode ? (
+              <>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{hasProgress ? 'Resume' : 'Play'}</span>
+              </>
+            ) : (
+              <>
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+                <span>Empty Folder</span>
+              </>
+            )}
           </button>
 
-          {item.autoType === 'series' && (
+          {item.autoType === 'series' && primaryEpisode && (
             <button
               type="button"
               data-focusable="true"

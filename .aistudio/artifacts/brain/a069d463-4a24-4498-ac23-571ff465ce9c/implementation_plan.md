@@ -1,109 +1,72 @@
-# CineVault Local — Personal Media Streaming Application
+# CineVault Local — Persistent State, SQLite Storage & Multi-Device LAN Streaming
 
-A personal, self-hosted media streaming web application built with TypeScript for browsing, organizing, and watching locally stored Anime, TV Shows, Movies, and video files across PCs, smartphones, and Smart TVs.
+This plan upgrades CineVault Local to persist all media folders, watching status, episode playback timestamps, watch history, and user preferences across page reloads, browser restarts, and multi-device local network (LAN) streaming sessions using a local SQLite database on the host PC paired with browser IndexedDB handle persistence.
 
-## User Review & Critical Decisions (Stage 2 & Stage 3 Approval)
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Please review and approve both the Requirements Specification (Stage 2) and Architecture & Technology Decisions (Stage 3) below.** Per your rules, no external databases, unapproved libraries, or hidden features will be added without your explicit approval.
+> The following architectural choices reflect your confirmed preferences. No source code changes or database additions will be made until you review and approve this plan.
 
-### Confirmed Stage 1 Requirements Summary
-- **Media Source & Access**: Server-side scanning of a configured local root folder path on your PC (with a built-in sample/demo media folder and folder-path configuration UI so it works immediately and can point to any directory on your computer).
-- **Folder Structure & Categorization**: Supports a single root folder containing mixed movie and series subfolders. Automatically detects **Movies** vs. **Series** (based on subfolder depth and episode files) and allows **manual category assignment/editing** in the UI (`Anime`, `TV Shows`, `Movies`, `Other`).
-- **Video & Subtitle Playback**:
-  - Browser-native `MP4` and `WebM` streaming via HTTP `206 Partial Content` byte-range requests.
-  - On-the-fly streaming support for `MKV` and `AVI` files.
-  - External `.srt` and `.vtt` subtitle files located in media folders (with automatic on-the-fly `SRT` to `WebVTT` conversion for browser compatibility).
-  - Embedded subtitle tracks and multiple audio tracks switching inside container files.
-- **Library & Playback Features**:
-  - **Continue Watching & Watch Progress**: Automatically saves playback timestamp and duration per video/episode and surfaces in-progress items in a dedicated row.
-  - **Favorites / Watchlist**: One-click bookmarking to save series or movies to a personal Watchlist.
-  - **Search & Filtering**: Live filtering by category (`All`, `Anime`, `TV Shows`, `Movies`, `Other`), watched status (`All`, `Unwatched`, `In Progress`, `Completed`), and title search.
-  - **Custom Metadata Editing**: Edit display titles, category tags, and custom poster image URLs or local cover files directly in the UI.
-- **Visual Design & Multi-Device Support**:
-  - **Dual Theme**: Full **Dark Mode** (cinematic deep obsidian slate `#0B0F17` with warm crimson/amber accent `#E11D48`) and **Light Mode** (clean daylight alabaster `#F8FAFC` with high-contrast slate typography).
-  - **Responsive Targets**:
-    - **PC / Laptop**: Desktop layout (`1440px` baseline) with top navigation bar, hover previews, and full keyboard shortcuts (`Space`, `F`, `M`, `ArrowLeft`/`ArrowRight`, `C`).
-    - **Smartphone**: Mobile-first touch grid, `>= 44px` touch targets, sticky bottom/compact navigation respecting the `< 15%` viewport sticky cap, and touch-friendly player controls.
-    - **Smart TV**: 10-foot UI mode / large-screen responsiveness with high-contrast focus rings (`focus-visible:ring-4`), large selectable cards, and spatial/directional arrow-key & TV remote navigation (`ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Enter`, `Escape`/`Back`).
-
----
-
-### Pending Architecture & Technology Approvals (Stage 3)
-
-> [!WARNING]
-> **Approval Request 1 — Local Metadata Persistence (No External Database)**
-> To save your watch progress, favorites, manual category overrides, and custom titles/posters without introducing an external database engine, we propose storing a human-readable JSON file (`media-library-state.json`) directly on the server disk alongside a local cache in browser storage.
-> - **Trade-off**: Zero database setup required and portable across folders, though intended for single-household/personal concurrency rather than thousands of simultaneous users.
-
-> [!WARNING]
-> **Approval Request 2 — MKV/AVI Streaming & Embedded Tracks (`FFmpeg` Local Binary + Pure Node Fallback)**
-> Web browsers (especially on Smart TVs and phones) cannot natively play raw `.avi` containers, certain `.mkv` audio codecs (like AC3/DTS), or extract embedded MKV subtitle/audio streams without server assistance.
-> - **Proposed Approach**: Use Node's built-in `child_process` to invoke your PC's local `ffmpeg` / `ffprobe` binary (when available on your system PATH) to probe embedded audio/subtitle tracks and remux `MKV`/`AVI` streams on the fly into fragmented MP4 (`fMP4`), while gracefully falling back to direct HTTP `206 Partial Content` byte-range streaming if `ffmpeg` is not installed.
-> - **Zero Extra Dependencies**: This uses standard Node.js built-in modules (`fs`, `path`, `stream`, `child_process`) without installing heavy native C++ packages.
+- **Confirmed Decision 1 — Hybrid Local Folder Access (`Server Path + Browser IndexedDB Handle`)**:
+  - **Host PC / LAN Server Folders**: The user can configure one or more local filesystem paths on the host PC, which are stored in the SQLite database on the host PC so the Host PC, Laptops, Smartphones, Tablets, and Smart TVs on the same Wi-Fi/LAN can browse and stream all media immediately without re-picking folders.
+  - **Browser-Picked Folders (`IndexedDB` Directory Handle + Snapshot Cache)**: When a folder is picked or dropped in the browser (`showDirectoryPicker`, folder input, or drag-and-drop), the app persists the `FileSystemDirectoryHandle` and scanned catalog structure in browser `IndexedDB` and syncs the catalog metadata, custom edits, and episode progress to the host SQLite database. On page reload, the catalog and watch status restore immediately; if the browser requires a single-click permission re-grant to read raw video blobs from a `FileSystemDirectoryHandle`, a non-intrusive **"Reconnect Local Folder"** banner lets you restore direct file access in one click.
+- **Confirmed Decision 2 — Persistence Engine (`SQLite Local Database on Host PC` + Client Fallback Sync)**:
+  - Uses Node.js's built-in `node:sqlite` (`DatabaseSync` in Node 22+, requiring zero external native compilation dependencies) stored in a local `.sqlite` database file on the host PC, automatically migrating any existing data from `media-library-state.json` on startup.
+  - Mirrors active UI preferences and catalog state to browser `localStorage` / `IndexedDB` so refreshing the page is instantaneous and resilient even if a folder is temporarily offline.
+- **Confirmed Decision 3 — LAN Access Control (`Optional PIN/Passcode Protection for LAN Clients`)**:
+  - By default, the host PC (`localhost` / `127.0.0.1`) has full access.
+  - You can enable an optional **4–6 digit PIN / Passcode** in the Network & Security Settings modal. When enabled, other devices on your local network (`192.168.x.x` / `10.x.x.x`) are prompted for the PIN once to receive an HTTP-only signed session cookie before browsing or streaming.
+- **Confirmed Decision 4 — Automatic Completion Threshold (`90%`)**:
+  - Whenever playback reaches or exceeds **90%** of a movie's or episode's duration, its status automatically transitions from `Watching` to `Completed`, records the completion timestamp in Watch History, and resets the resume pointer so re-watching starts cleanly while preserving the completed badge.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Transforms any local folder of anime, shows, and movies on your PC into a cohesive, multi-device streaming portal with instant byte-range scrubbing, subtitle rendering, episode tracking, and customizable library organization.
-- **Target Audience / Persona**: Personal home media viewer watching anime, series, and films across a desktop monitor, phone over local Wi-Fi, or living-room Smart TV browser.
-- **Key Value**: Combines the simplicity of local folder storage with the browsing ergonomics, resume-playback memory, and multi-device responsiveness of a dedicated streaming platform.
+- **What It Does**: Transforms CineVault Local into a persistent, self-hosted home media server and player where folder selections, custom metadata, episode progress (`Unwatched`, `Watching`, `Completed`), watch history, and UI preferences survive reloads and restarts, and where any device on your home Wi-Fi can stream from your PC.
+- **Target Audience / Persona**: A home media enthusiast running CineVault on a Windows/Linux/macOS PC who wants zero-friction reload persistence and seamless streaming to laptops, phones, tablets, and Smart TVs on the local network.
+- **Key Value**: Eliminates repetitive folder re-selection after browser refreshes, keeps watching progress synchronized across devices, and provides clear LAN IP discovery, Windows Firewall instructions, and codec/remux streaming support out of the box.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-### Key User Flows
-1. **Library Scan & Setup Flow**:
-   - On launch, the server scans the configured root media directory (and includes sample local video files out-of-the-box so you can test playback immediately).
-   - Users can open **Library Settings** at any time to change the local root folder path on their PC and trigger a re-scan.
-2. **Browsing & Discovery Flow**:
-   - **Hero Spotlight**: Displays the currently active "Continue Watching" item or featured library title with direct **Resume / Play** and **Watchlist** actions.
-   - **Continue Watching Row**: Shows partially watched movies and episodes with a visual progress bar and tabular remaining time (`24m left`).
-   - **Filterable Media Grid**: Users filter by Category (`All`, `Anime`, `TV Shows`, `Movies`, `Other`), Watched Status (`All`, `Unwatched`, `In Progress`, `Watched`), and search query.
-3. **Series & Season Detail Flow**:
-   - Clicking a multi-episode item opens the **Series Detail Drawer/View** showing seasons, episode list, individual episode durations, watched progress bars, and quick-play buttons.
-4. **Custom Metadata & Category Editing Flow**:
-   - Clicking **Edit Info** on any card opens a clean modal to change its display title, reassign its category (`Anime`, `TV Shows`, `Movies`, `Other`), or set a custom poster image (from local folder artwork or image URL).
-5. **Video Player & Multi-Track Flow**:
-   - Opens a dedicated full-viewport responsive player supporting play/pause, timeline scrubbing, 10-second skip, volume/mute, audio track selector, subtitle track selector (external `.srt`/`.vtt` + embedded tracks, or upload custom `.srt`/`.vtt`), playback speed, next-episode button, and fullscreen toggle.
+- **Key User Flows**:
+  1. **Zero-Effort Reload & Folder Reconnection**:
+     - Refreshing the browser (`F5`) or restarting the app immediately loads the persisted media folders, enriched AniList/TMDB posters, watch progress bars, active category tab, sort order, and theme without resetting to demo state.
+     - If a configured server folder is unplugged/unavailable (e.g., an external drive `E:\media` is disconnected) or a browser-picked folder handle needs read permission after a browser restart, a clear **Folder Availability Banner** appears at the top of the library with one-click **"Reconnect Folder"** or **"Update Folder Location"** actions while preserving all saved watch progress.
+  2. **Watching Status, Resume Playback & Watch History**:
+     - Every movie and episode tracks three explicit states: **Unwatched**, **Watching** (with saved timestamp, percentage bar, remaining time, and last-watched date), and **Completed** (automatically triggered at $\ge 90\%$ duration or toggled manually).
+     - Clicking **Resume** on the Hero Spotlight, Continue Watching row, or Series Episode list starts playback directly at the saved timestamp.
+     - A dedicated **Watch History** drawer/panel inside Library Settings (and accessible from the toolbar) displays chronologically watched episodes and movies with timestamps and quick resume or status reset controls.
+  3. **Local Network (LAN) Streaming & Setup Hub**:
+     - Opening **Library & Network Server Settings** reveals a dedicated **LAN Streaming & Multi-Device Access** tab.
+     - Automatically detects and displays the host PC's local network IPv4 addresses (e.g., `http://192.168.1.42:3000`) with a one-click copy button, step-by-step instructions for connecting from phones, tablets, laptops, and Smart TVs, and copyable Windows Firewall (`New-NetFirewallRule`) commands.
+     - Includes an **Optional LAN PIN Lock** toggle where the host user can set or disable a 4–8 digit passcode for non-localhost LAN devices.
 
-### Visual Identity & Theme
-- **Aesthetic Direction**: Refined home-cinema media deck combining editorial clarity with high-contrast legibility for both 18-inch desktop viewing and 10-foot Smart TV viewing.
-- **Color Palette & Mood (60-30-10 Discipline)**:
-  - **Dark Mode (Default)**:
-    - `60% Dominant Canvas`: Deep Obsidian (`#0B0F17` / `bg-slate-950`)
-    - `30% Structural Surfaces`: Elevated Charcoal (`#151C28` / `bg-slate-900`) with `1px` subtle borders (`border-slate-800/80`)
-    - `10% Accent Budget`: Cinema Crimson (`#E11D48` / `rose-600`) for primary Play CTAs, progress bars, and TV remote focus rings; semantic Emerald (`#16A34A`) for completed status.
-  - **Light Mode**:
-    - `60% Dominant Canvas`: Crisp Alabaster (`#F8FAFC` / `bg-slate-50`)
-    - `30% Structural Surfaces`: Pure White (`#FFFFFF`) with hairline borders (`border-slate-200`)
-    - `10% Accent Budget`: Deep Crimson (`#BE123C` / `rose-700`) and Slate (`#0F172A`) for high-contrast controls.
-- **Typography & Hierarchy (2+1 Font Rule)**:
-  - *Display / Headings*: `Outfit` (600/700 weight, tight tracking, `text-wrap: balance`) for expressive show titles and section headers.
-  - *Body & UI Controls*: `Plus Jakarta Sans` (400/500/600 weight) for high legibility across phone and TV screens.
-  - *Timestamps, Episode Numbers & Durations*: `JetBrains Mono` with `tabular-nums` (`01:24:10`, `S01 · E04`) to prevent layout jitter during playback scrubbing.
-- **Zero-Pill Metadata Discipline**:
-  - Card metadata (e.g., `Anime · 12 Episodes · 1080p` or `Movie · MKV · 1h 58m`) is rendered as clean, unboxed inline text with middle-dot (`·`) separators—never cluttered with static pill capsules.
-- **Top Bar Contract**:
-  - Strictly one row with three zones separated by `gap-8`:
-    1. **Brand Wordmark**: `CineVault` (single-line display wordmark).
-    2. **Primary Navigation Links**: `Home`, `Anime`, `TV Shows`, `Movies`, `Watchlist` (single-line `whitespace-nowrap` links with keyboard/remote focus support).
-    3. **Primary Action**: `Library Settings` button (plus theme/TV-mode controls integrated cleanly in the workspace toolbar).
+- **Visual Identity & Theme**:
+  - **Aesthetic Direction**: Atmospheric dark-first cinema vault (`#020617` slate-950 canvas, `#0F172A` slate-900 structural cards, `1px` `#1E293B` hairline borders, `#E11D48` rose-600 primary actions).
+  - **Typography & Hierarchy**: `Outfit` for display titles and section headers, `Plus Jakarta Sans` for clean body legibility, and `JetBrains Mono` (`tabular-nums`) for timecodes, IP addresses, ports, file sizes, and progress percentages.
+  - **Anti-Slop & Zero-Pill Discipline**: Metadata (release year, episode count, container format, last watched date) is rendered as clean inline text separated by `·` bullets. Interactive filters and tabs use crisp segmented buttons.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Hybrid Auto-Detection + Manual Category Overrides**
-  - *Chosen Approach*: The scanner inspects each top-level entry in your root folder. Single video files or folders with 1 main video file default to `Movies`; folders with multiple episode files or `Season` subfolders default to `TV Shows` (or `Anime` if keywords/tags match), and any item can be manually reassigned in the UI and saved persistently.
-  - *Why*: Eliminates the need to reorganize files on your hard drive while still giving you exact control over what appears under Anime, TV Shows, Movies, or Other.
-- **Decision 2: Adaptive Multi-Device Navigation (Mouse, Touch, and TV Remote D-Pad)**
-  - *Chosen Approach*: Implement a spatial keyboard/D-Pad navigation handler (`Arrow` keys move focus predictably across media cards and filter controls, `Enter` selects, `Escape`/`Backspace` closes modals or exits the player) alongside standard touch and mouse events, plus a toggleable **TV Display Scale** mode for large screens.
-  - *Why*: Smart TV browsers rely on directional remote buttons and clear visual focus outlines (`focus-visible`), whereas phones need swipeable rows and large tap areas.
-- **Decision 3: Smart TV & Browser Playback Compatibility Layer**
-  - *Chosen Approach*: Directly stream `MP4`/`WebM` using HTTP `206 Partial Content` byte ranges for zero-CPU instant seeking; automatically convert `.srt` subtitles into `.vtt` streams; and provide an on-the-fly `FFmpeg` remux/transcode endpoint for `.mkv`/`.avi` files and embedded track selection, with clear UI compatibility diagnostics if a Smart TV browser lacks codec support and `FFmpeg` is not installed on the host PC.
+- **Decision 1: Node.js Built-In SQLite (`node:sqlite`) vs. External ORM/Database Server**
+  - *Chosen Approach*: Use Node 22's built-in `node:sqlite` (`DatabaseSync`) in WAL (Write-Ahead Logging) mode, backed by a single local file (`cinevault.sqlite`) in the project directory, with automatic migration from `media-library-state.json`.
+  - *Why*: Provides ACID transactions, concurrent multi-device read/write safety across LAN clients, and structured tables for folders, catalog items, episode progress, watch history, and user preferences—without requiring external database servers or fragile C++ native addon builds.
+  - *Alternatives Considered*: Pure JSON file (prone to write races when multiple LAN devices update progress simultaneously); Cloud database (violates offline local-network requirement).
+
+- **Decision 2: Hybrid Folder Access (`Server Path` + `Browser IndexedDB Handle`)**
+  - *Chosen Approach*: Support both server-accessible directory paths (ideal for LAN streaming to phones/TVs because the Node.js server reads the files directly from disk) and browser-picked directories stored in `IndexedDB` (ideal when picking folders through the browser file dialog, syncing catalog metadata and progress to SQLite so nothing is lost on refresh).
+  - *Why*: Browser security sandboxes do not expose full OS paths (`E:\Downloads\media`) from `<input webkitdirectory>`, nor can a phone on Wi-Fi read a `Blob` living solely inside the host browser's memory. By combining persistent `IndexedDB` directory handles + catalog caching with a one-click server folder path linker, both single-PC browser picking and multi-device LAN streaming work seamlessly.
+
+- **Decision 3: LAN Security & Path Traversal Hardening**
+  - *Chosen Approach*:
+    1. **Strict Path Whitelisting**: The streaming and subtitle endpoints resolve canonical paths (`path.resolve`) and verify that every requested file resides strictly inside one of the user's configured media root folders. Any manipulated URL or `..` traversal attempt returns `403 Forbidden`.
+    2. **Optional LAN PIN Gate**: Localhost (`127.0.0.1` / `::1`) is always trusted as the Host PC. Remote LAN IPs (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`) are allowed directly when Trusted Network mode is active, or prompted for a PIN when PIN Protection is enabled.
+  - *Security Risks Explained*: Allowing LAN access means anyone connected to the same Wi-Fi router (such as guests or roommates) can open your PC's IP and port in their browser. Restricting file access strictly to configured media directories prevents anyone on the Wi-Fi from reading personal documents outside your media folders, and the optional PIN lock prevents unauthorized viewing or progress changes on shared Wi-Fi networks.
 
 ---
 
@@ -112,60 +75,69 @@ A personal, self-hosted media streaming web application built with TypeScript fo
 ### Architecture & Component Diagram
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                     MULTI-DEVICE CLIENT (PC / Phone / TV)                  │
-│                                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │ Top Navigation Bar (Brand Wordmark │ Category Nav │ Library Setup)   │  │
-│  └──────────────────────────────────┬───────────────────────────────────┘  │
-│                                     ▼                                      │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │ Workspace Toolbar (Search Input, Watched Status Filter, Theme/TV UI) │  │
-│  └───────────────┬──────────────────────────────────────┬───────────────┘  │
-│                  ▼                                      ▼                  │
-│  ┌───────────────────────────────┐      ┌───────────────────────────────┐  │
-│  │ Library Browser Views         │      │ Interactive Modals & Player   │  │
-│  │ • Hero Spotlight Banner       │      │ • Series Season/Episode Sheet │  │
-│  │ • Continue Watching Row       │      │ • Metadata & Poster Editor    │  │
-│  │ • Responsive Media Card Grid  │      │ • HTML5/MSE Video Player      │  │
-│  │ • D-Pad / Keyboard Focus Mgr  │      │   (Subtitles, Audio, Scrub)   │  │
-│  └───────────────┬───────────────┘      └───────────────┬───────────────┘  │
-└──────────────────┼──────────────────────────────────────┼──────────────────┘
-                   │ HTTP / JSON API                      │ HTTP 206 / Stream
-                   ▼                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│                        LOCAL PC SERVER BACKEND (Node)                      │
-│                                                                            │
-│  ┌─────────────────────────┐  ┌────────────────────┐  ┌─────────────────┐  │
-│  │ /api/library            │  │ /api/state         │  │ /api/stream     │  │
-│  │ • Recursive FS Scanner  │  │ • Watch Progress   │  │ • HTTP 206 Byte │  │
-│  │ • Auto Movie/Show Rule  │  │ • Watchlist/Favs   │  │   Range Slicer  │  │
-│  │ • Subtitle & Poster     │  │ • Manual Category  │  │ • MKV/AVI Remux │  │
-│  │   File Matcher          │  │   & Title Overrides│  │ • SRT -> WebVTT │  │
-│  └───────────┬─────────────┘  └─────────┬──────────┘  └────────┬────────┘  │
-└──────────────┼──────────────────────────┼──────────────────────┼───────────┘
-               ▼                          ▼                      ▼
-      [Local Media Folder]     [media-library-state.json]  [Video & SRT Files]
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                     CLIENT DEVICES (Host PC, Phone, Tablet, TV)              │
+│                                                                              │
+│  ┌─────────────────────────┐  ┌────────────────────────┐  ┌───────────────┐  │
+│  │  TopNav & Workspace     │  │  Library Grid, Hero &  │  │ VideoPlayer   │  │
+│  │  Toolbar (Tabs, Sort,   │  │  Continue Watching     │  │ Modal (Range  │  │
+│  │  Filter, Search, Theme) │  │  (90% Auto-Complete)   │  │ & fMP4 Remux) │  │
+│  └───────────┬─────────────┘  └───────────┬────────────┘  └───────┬───────┘  │
+│              │                            │                       │          │
+│  ┌───────────┴────────────────────────────┴───────────────────────┴───────┐  │
+│  │         Client Persistence & Reconnect Layer (IndexedDB + LocalStorage)│  │
+│  │  • Persists FileSystemDirectoryHandle & picked folder catalog snapshot │  │
+│  │  • One-click "Reconnect Folder" permission flow on browser restart     │  │
+│  │  • Automatic network retry & playback resume on Wi-Fi drop             │  │
+│  └────────────────────────────────────────┬───────────────────────────────┘  │
+└───────────────────────────────────────────┼──────────────────────────────────┘
+                                            │ HTTP / LAN (0.0.0.0:3000)
+                                            ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       HOST PC NEXT.JS MEDIA SERVER                           │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  LAN Access Control & Security Guard                                   │  │
+│  │  • Path canonicalization (blocks arbitrary file access outside roots)  │  │
+│  │  • Optional LAN PIN verification & HTTP-only session token             │  │
+│  │  • OS Network Interface IPv4 detector (192.168.x.x / 10.x.x.x)         │  │
+│  └───────────────┬────────────────────────────────────────┬───────────────┘  │
+│                  ▼                                        ▼                  │
+│  ┌───────────────────────────────────┐    ┌───────────────────────────────┐  │
+│  │  SQLite Persistence Engine        │    │  Media & Remux Streaming API  │  │
+│  │  (cinevault.sqlite via node:sqlite│    │  • HTTP 206 Byte-Range (MP4)  │  │
+│  │  • media_folders (multi-folder)   │    │  • Live FFmpeg fMP4 Remux     │  │
+│  │  • catalog_items & metadata_cache │    │    (-c:v copy -c:a aac -ac 2) │  │
+│  │  • episode_progress & history     │    │  • External & Embedded Subs   │  │
+│  │  • user_preferences & lan_pin     │    └───────────────────────────────┘  │
+│  └───────────────────────────────────┘                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Model & State
-- **`MediaItem`**:
-  - `id`: Deterministic hash of relative folder/file path
-  - `title`: Display title (parsed from folder/file name or user custom override)
-  - `autoType`: `'movie' | 'series'`
-  - `category`: `'anime' | 'tv' | 'movies' | 'other'` (supports manual override)
-  - `posterUrl`: Local detected cover image (`poster.jpg`, `cover.png`), custom URL, or generated fallback artwork
-  - `episodes`: Array of `MediaEpisode` (1 item for movies, multiple sorted by season/episode for series)
-  - `isFavorite`: Boolean flag in persistent state
-- **`MediaEpisode`**:
-  - `id`: Unique file identifier
-  - `title`, `seasonNumber`, `episodeNumber`, `fileName`, `relativePath`, `containerFormat` (`mp4`, `webm`, `mkv`, `avi`)
-  - `subtitles`: Array of detected external `.srt`/`.vtt` files + embedded subtitle tracks
-  - `audioTracks`: Array of detected audio streams
-  - `progress`: `{ currentTime: number, duration: number, completed: boolean, updatedAt: string }`
+### Data Model & SQLite Schema (`cinevault.sqlite`)
 
-### Incremental Implementation Plan (Stage 4 Checkpoints)
-Once you approve this specification and architecture, we will build and verify the application in structured phases:
-1. **Phase 1 — Backend Media Scanner, State Store & Streaming Engine**: Local folder scanner, persistent JSON state for overrides/progress, HTTP 206 Range video streaming, SRT-to-VTT subtitle converter, and MKV/AVI compatibility layer.
-2. **Phase 2 — Responsive Multi-Device UI & Library Management**: Dark/Light theme system, PC/Mobile/Smart TV adaptive layout, D-Pad/keyboard focus navigation, Continue Watching row, Search/Filter bar, Series Episode selector, and Custom Metadata/Category editor.
-3. **Phase 3 — Full-Featured Video Player & Multi-Device Verification**: Custom responsive video player with subtitle selector, audio track switcher, watch-progress auto-save, keyboard/remote shortcuts, and full compilation verification.
+1. **`media_folders`**:
+   - `id` (TEXT PRIMARY KEY), `path` (TEXT), `label` (TEXT), `source_type` (`'server' | 'client_handle'`), `is_active` (INTEGER), `last_scanned_at` (TEXT).
+2. **`catalog_snapshots`**:
+   - Stores serialized catalog items and episode structures for client-picked folders so that refreshing the page or viewing from another tab restores the library immediately even before re-scanning files.
+3. **`media_overrides`**:
+   - `media_id` (TEXT PRIMARY KEY), `is_favorite` (INTEGER), `manual_category` (TEXT), `custom_title` (TEXT), `custom_synopsis` (TEXT), `custom_poster` (TEXT), `external_metadata_json` (TEXT).
+4. **`episode_progress`**:
+   - `episode_id` (TEXT PRIMARY KEY), `media_id` (TEXT), `status` (`'unwatched' | 'watching' | 'completed'`), `current_time` (REAL), `duration` (REAL), `completed` (INTEGER), `last_watched_at` (TEXT).
+5. **`watch_history`**:
+   - `id` (INTEGER PRIMARY KEY AUTOINCREMENT), `episode_id` (TEXT), `media_id` (TEXT), `media_title` (TEXT), `episode_title` (TEXT), `season_number` (INTEGER), `episode_number` (INTEGER), `current_time` (REAL), `duration` (REAL), `status` (TEXT), `watched_at` (TEXT).
+6. **`user_preferences`**:
+   - `key` (TEXT PRIMARY KEY), `value_json` (TEXT) — stores `activeTab`, `watchedFilter`, `sortBy` (`title`, `lastWatched`, `year`, `rating`), `darkMode`, `tvMode`, `completionThreshold` (`0.90`), `playbackVolume`, `playbackSpeed`, `preferredAudioLang`, `preferredSubLang`, and `lanPinConfig`.
+
+### Interactive Component & State Mapping
+
+- **Startup & Reload Lifecycle**:
+  - On mount, the app fetches `/api/library` (which loads SQLite-persisted server folders, client catalog snapshots, episode progress, watch history, user preferences, and LAN network info) AND checks browser `IndexedDB` for any saved `FileSystemDirectoryHandle`.
+  - If the active library was picked via browser folder picker, the saved catalog + watching progress renders immediately from SQLite/IndexedDB. If the user plays a local video whose `File` handle requires browser permission after a full browser restart, the app invokes `dirHandle.requestPermission({ mode: 'read' })` or prompts to re-link the folder without losing any progress.
+- **90% Automatic Completion & Progress Sync**:
+  - During playback, `VideoPlayerModal` saves progress every 5 seconds, on pause, on seek, and on close.
+  - When `currentTime / duration >= 0.90`, the episode is marked `completed = true` (`status = 'completed'`), logged to `watch_history`, and synchronized to both SQLite and client state so all connected LAN devices immediately see the updated progress.
+- **LAN Multi-Device Streaming & Network Resilience**:
+  - The server binds to `0.0.0.0:3000` (all network interfaces).
+  - `/api/network` returns the host PC's detected LAN IPv4 URLs (e.g., `http://192.168.1.x:3000`), firewall helper commands, and PIN lock status.
+  - In `VideoPlayerModal`, if a brief Wi-Fi drop interrupts streaming (`onStalled` / `onError`), the player displays a non-blocking reconnecting indicator and automatically resumes from `currentTimeRef.current` once the network responds.

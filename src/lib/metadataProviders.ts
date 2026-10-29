@@ -43,6 +43,38 @@ export function stripHtmlTags(raw: string | null | undefined): string {
     .trim();
 }
 
+function normalizeTitleForCompare(str: string | null | undefined): string {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .replace(/\b(the|a|an|season|part|cour|movie|tv|ova|ona|series)\b/g, '')
+    .replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9faf]/g, '')
+    .trim();
+}
+
+function isExactOrStrongTitleMatch(query: string, candidate: ExternalMetadataMatch): boolean {
+  const nq = normalizeTitleForCompare(query);
+  if (!nq) return false;
+
+  const candidates = [
+    candidate.title,
+    candidate.originalTitle,
+    ...(candidate.synonyms || []),
+  ].filter(Boolean) as string[];
+
+  for (const c of candidates) {
+    const nc = normalizeTitleForCompare(c);
+    if (!nc) continue;
+    if (nq === nc) return true;
+    // Also match if query and candidate share a core title prefix before colon/hyphen (min 5 chars)
+    const coreQ = normalizeTitleForCompare(query.split(/[:\-–]/)[0]);
+    const coreC = normalizeTitleForCompare(c.split(/[:\-–]/)[0]);
+    if (coreQ.length >= 5 && coreQ === coreC) return true;
+  }
+
+  return false;
+}
+
 /**
  * Search AniList GraphQL API (https://graphql.anilist.co) for Anime metadata:
  * Posters, Banner, Story/Synopsis, Genres, Score, Year, and Studio.
@@ -64,6 +96,7 @@ export async function searchAniListAnime(
             romaji
             native
           }
+          synonyms
           description(asHtml: false)
           seasonYear
           startDate {
@@ -109,12 +142,19 @@ export async function searchAniListAnime(
       const romajiTitle = m.title?.romaji || displayTitle;
       const year = String(m.seasonYear || m.startDate?.year || '2024');
       const studio = m.studios?.nodes?.[0]?.name || 'Anime Studio';
+      const synonyms = [
+        ...(Array.isArray(m.synonyms) ? m.synonyms : []),
+        m.title?.native,
+        m.title?.romaji,
+        m.title?.english,
+      ].filter(Boolean) as string[];
 
       return {
         provider: 'anilist' as const,
         externalId: String(m.id),
         title: displayTitle,
         originalTitle: romajiTitle,
+        synonyms,
         synopsis: stripHtmlTags(m.description) || `Anime series produced by ${studio}.`,
         posterUrl: m.coverImage?.extraLarge || m.coverImage?.large || '',
         bannerUrl: m.bannerImage || m.coverImage?.extraLarge || '',
@@ -123,6 +163,7 @@ export async function searchAniListAnime(
         ratingScore: typeof m.averageScore === 'number' ? m.averageScore : undefined,
         studioOrNetwork: studio,
         mediaType: 'ANIME' as const,
+        isAnimeCandidate: true,
       };
     });
   } catch (err) {
@@ -176,9 +217,16 @@ export async function searchTmdbMedia(
             const origTitle = item.original_title || item.original_name || title;
             const dateStr = item.release_date || item.first_air_date || '';
             const year = dateStr ? dateStr.slice(0, 4) : '2024';
-            const genres = Array.isArray(item.genre_ids)
-              ? item.genre_ids.map((id: number) => TMDB_GENRES[id]).filter(Boolean).slice(0, 4)
-              : [];
+            const genreIds: number[] = Array.isArray(item.genre_ids) ? item.genre_ids : [];
+            const genres = genreIds
+              .map((id: number) => TMDB_GENRES[id])
+              .filter(Boolean)
+              .slice(0, 4);
+
+            const isAnimeCandidate =
+              genreIds.includes(16) &&
+              (item.original_language === 'ja' ||
+                (Array.isArray(item.origin_country) && item.origin_country.includes('JP')));
 
             return {
               provider: 'tmdb' as const,
@@ -199,7 +247,12 @@ export async function searchTmdbMedia(
                   ? Math.round(item.vote_average * 10)
                   : undefined,
               studioOrNetwork: 'TMDB Catalog',
-              mediaType: targetType === 'tv' ? ('TV' as const) : ('MOVIE' as const),
+              mediaType: isAnimeCandidate
+                ? ('ANIME' as const)
+                : targetType === 'tv'
+                ? ('TV' as const)
+                : ('MOVIE' as const),
+              isAnimeCandidate,
             };
           });
         }
@@ -227,6 +280,13 @@ export async function searchTmdbMedia(
                 : undefined;
             const network = show.network?.name || show.webChannel?.name || 'Television Network';
             const poster = show.image?.original || show.image?.medium || '';
+            const showGenres: string[] = Array.isArray(show.genres) ? show.genres : [];
+            const countryCode =
+              show.network?.country?.code || show.webChannel?.country?.code || '';
+            const isAnimeCandidate =
+              showGenres.some((g) => g.toLowerCase() === 'anime') ||
+              (String(show.type).toLowerCase() === 'animation' &&
+                (String(show.language).toLowerCase() === 'japanese' || countryCode === 'JP'));
 
             return {
               provider: 'tmdb' as const,
@@ -238,12 +298,11 @@ export async function searchTmdbMedia(
               bannerUrl: poster ? poster.replace(/^http:/, 'https:') : '',
               releaseYear: year,
               genres:
-                Array.isArray(show.genres) && show.genres.length > 0
-                  ? show.genres.slice(0, 4)
-                  : ['Drama', 'TV Series'],
+                showGenres.length > 0 ? showGenres.slice(0, 4) : ['Drama', 'TV Series'],
               ratingScore: rating,
               studioOrNetwork: network,
-              mediaType: 'TV' as const,
+              mediaType: isAnimeCandidate ? ('ANIME' as const) : ('TV' as const),
+              isAnimeCandidate,
             };
           });
         }
@@ -261,7 +320,12 @@ export async function searchTmdbMedia(
       if (sugRes.ok) {
         const sugData = await sugRes.json();
         const items = Array.isArray(sugData?.d)
-          ? sugData.d.filter((x: { i?: { imageUrl?: string }; qid?: string }) => x.i?.imageUrl && (!x.qid || x.qid === 'movie' || x.qid === 'tvMovie')).slice(0, limit)
+          ? sugData.d
+              .filter(
+                (x: { i?: { imageUrl?: string }; qid?: string }) =>
+                  x.i?.imageUrl && (!x.qid || x.qid === 'movie' || x.qid === 'tvMovie')
+              )
+              .slice(0, limit)
           : [];
 
         if (items.length > 0) {
@@ -284,7 +348,6 @@ export async function searchTmdbMedia(
                   ? `${title} (${year}) — Starring ${m.s}.`
                   : `Feature film (${year}).`;
 
-                // Fetch full plot synopsis for the top results from Wikipedia REST summary
                 if (idx < 2) {
                   try {
                     const wikiSlug = encodeURIComponent(title.replace(/\s+/g, '_'));
@@ -331,23 +394,71 @@ export async function searchTmdbMedia(
 }
 
 /**
- * Automatically enrich a title based on its category ('anime' -> AniList, 'tv' -> TMDB TV, 'movies' -> TMDB Movie)
+ * Automatically enrich a title and determine whether it is an Anime (AniList)
+ * or a Movie / TV Show (TMDB) — even when the folder name does not contain "[Anime]".
  */
 export async function autoResolveMetadataForTitle(
   title: string,
   category: MediaCategory
 ): Promise<ExternalMetadataMatch | null> {
+  const cleanTitle = title.trim();
+  if (!cleanTitle) return null;
+
+  // 1. Explicit Anime category -> Search AniList first (with core-prefix retry if needed)
   if (category === 'anime') {
-    const matches = await searchAniListAnime(title, 1);
+    let matches = await searchAniListAnime(cleanTitle, 3);
+    if (matches.length === 0 && /[:\-–]/.test(cleanTitle)) {
+      const prefix = cleanTitle.split(/[:\-–]/)[0].trim();
+      if (prefix.length >= 3) {
+        matches = await searchAniListAnime(prefix, 3);
+      }
+    }
     return matches[0] || null;
   }
-  if (category === 'tv') {
-    const matches = await searchTmdbMedia(title, 'tv', 1);
-    return matches[0] || null;
+
+  // 2. For 'tv' or 'movies' (which may actually be an Anime folder without "[Anime]" in the name!):
+  // Query AniList AND TMDB in parallel so Anime is automatically recognized and enriched via AniList.
+  const targetTmdbType = category === 'tv' ? 'tv' : 'movie';
+  const [aniListMatches, primaryTmdbMatches] = await Promise.all([
+    searchAniListAnime(cleanTitle, 4),
+    searchTmdbMedia(cleanTitle, targetTmdbType, 4),
+  ]);
+
+  let tmdbMatches = primaryTmdbMatches;
+  // If a 1-file series folder was initially guessed as 'movies' and didn't match a movie closely, check 'tv' as well
+  if (
+    category === 'movies' &&
+    (!tmdbMatches[0] || !isExactOrStrongTitleMatch(cleanTitle, tmdbMatches[0]))
+  ) {
+    const tvFallback = await searchTmdbMedia(cleanTitle, 'tv', 3);
+    if (tvFallback.length > 0) {
+      tmdbMatches = tvFallback;
+    }
   }
-  if (category === 'movies') {
-    const matches = await searchTmdbMedia(title, 'movie', 1);
-    return matches[0] || null;
+
+  const topTmdb = tmdbMatches[0];
+  const exactAniList = aniListMatches.find((a) => isExactOrStrongTitleMatch(cleanTitle, a));
+  const topAniList = exactAniList || aniListMatches[0];
+
+  // Case A: TMDB / TVMaze explicitly identified the title as Japanese Animation / Anime
+  if (topTmdb?.isAnimeCandidate && topAniList) {
+    return topAniList;
   }
-  return null;
+
+  // Case B: AniList has an exact/strong match for the title (English, Romaji, Native, or Synonym)
+  if (exactAniList) {
+    const tmdbHasExactLiveAction =
+      topTmdb && !topTmdb.isAnimeCandidate && isExactOrStrongTitleMatch(cleanTitle, topTmdb);
+    // If TMDB does not have an exact live-action match, or if the title is a known anime match, use AniList
+    if (!tmdbHasExactLiveAction) {
+      return exactAniList;
+    }
+  }
+
+  // Case C: Return TMDB match for TV Show / Movie, or fallback to AniList if TMDB returned nothing
+  if (topTmdb) {
+    return topTmdb;
+  }
+
+  return topAniList || null;
 }

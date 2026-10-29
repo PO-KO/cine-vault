@@ -4,14 +4,20 @@ import {
   convertSrtToVtt,
   ensureInitialized,
   getEpisodeEntry,
+  isPathAllowedInLibrary,
+  verifyRequestLanAccess,
 } from '@/src/lib/mediaServer';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ episodeId: string; subId: string }> }
 ) {
+  if (!verifyRequestLanAccess(request)) {
+    return new NextResponse('LAN PIN authentication required', { status: 401 });
+  }
+
   const { episodeId, subId } = await context.params;
   const state = await ensureInitialized();
   const epEntry = getEpisodeEntry(episodeId, state);
@@ -35,8 +41,8 @@ export async function GET(
     });
   }
 
-  if (!sub.fullPath || !fs.existsSync(sub.fullPath)) {
-    return new NextResponse('Subtitle file missing on disk', { status: 404 });
+  if (!sub.fullPath || !fs.existsSync(sub.fullPath) || !isPathAllowedInLibrary(sub.fullPath, state)) {
+    return new NextResponse('Subtitle file missing or outside configured folders', { status: 404 });
   }
 
   const rawText = fs.readFileSync(sub.fullPath, 'utf-8');

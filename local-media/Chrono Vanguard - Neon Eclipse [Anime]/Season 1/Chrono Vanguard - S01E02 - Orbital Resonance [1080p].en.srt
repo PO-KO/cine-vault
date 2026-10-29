@@ -1,4 +1,0 @@
-1
-00:00:00,500 --> 00:00:05,000
-[Episode 02 — Orbital Resonance]
-We've reached low-earth orbit, but the resonance wave is still echoing.

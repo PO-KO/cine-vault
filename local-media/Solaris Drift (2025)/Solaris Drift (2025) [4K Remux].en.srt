@@ -1,4 +1,0 @@
-1
-00:00:00,500 --> 00:00:05,000
-[Deep Space Vessel Helios — Day 412]
-Orbital insertion around Kepler-442b complete.

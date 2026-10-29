@@ -20,11 +20,16 @@ export const SeriesDetailModal: React.FC<SeriesDetailModalProps> = ({
 }) => {
   const seasons = useMemo(() => {
     const set = new Set<number>();
+    if (item.seasons) {
+      for (const s of item.seasons) {
+        set.add(s);
+      }
+    }
     for (const ep of item.episodes) {
       set.add(ep.seasonNumber);
     }
     return Array.from(set).sort((a, b) => a - b);
-  }, [item.episodes]);
+  }, [item.episodes, item.seasons]);
 
   const [selectedSeason, setSelectedSeason] = useState<number>(
     item.inProgressEpisode?.seasonNumber || seasons[0] || 1
@@ -54,7 +59,9 @@ export const SeriesDetailModal: React.FC<SeriesDetailModalProps> = ({
               <span>{item.releaseYear}</span>
               <span aria-hidden="true">·</span>
               <span className="font-mono tabular-nums">
-                {item.watchedEpisodes} of {item.totalEpisodes} Episodes Watched
+                {item.totalEpisodes === 0
+                  ? 'Empty Folder (0 Video Files)'
+                  : `${item.watchedEpisodes} of ${item.totalEpisodes} Episodes Watched`}
               </span>
             </div>
             <h2
@@ -83,17 +90,18 @@ export const SeriesDetailModal: React.FC<SeriesDetailModalProps> = ({
         </div>
 
         {/* Season Selector Bar */}
-        {seasons.length > 1 && (
+        {seasons.length >= 1 && (
           <div className="px-6 py-3 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 overflow-x-auto">
             {seasons.map((seasonNum) => {
               const active = selectedSeason === seasonNum;
+              const epCount = item.episodes.filter((ep) => ep.seasonNumber === seasonNum).length;
               return (
                 <button
                   key={seasonNum}
                   type="button"
                   data-focusable="true"
                   onClick={() => setSelectedSeason(seasonNum)}
-                  className={`px-4 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`px-4 py-1.5 rounded-lg font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 ${
                     tvMode ? 'text-sm' : 'text-xs'
                   } ${
                     active
@@ -101,115 +109,179 @@ export const SeriesDetailModal: React.FC<SeriesDetailModalProps> = ({
                       : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:border-slate-300'
                   }`}
                 >
-                  Season {seasonNum}
+                  <span>Season {seasonNum}</span>
+                  <span
+                    className={`font-mono text-[11px] ${
+                      active
+                        ? 'text-rose-100'
+                        : epCount === 0
+                        ? 'text-amber-500'
+                        : 'text-slate-400 dark:text-slate-500'
+                    }`}
+                  >
+                    ({epCount === 0 ? 'Empty' : epCount})
+                  </span>
                 </button>
               );
             })}
           </div>
         )}
 
-        {/* Episode List */}
+        {/* Episode List or Empty Season/Folder State */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800/80 p-4 sm:p-6 space-y-3">
-          {seasonEpisodes.map((ep) => {
-            const hasProgress = ep.progress.currentTime > 0 && !ep.progress.completed;
-            const pct =
-              ep.progress.duration > 0
-                ? Math.min(100, Math.round((ep.progress.currentTime / ep.progress.duration) * 100))
-                : 0;
+          {seasonEpisodes.length === 0 ? (
+            <div className="py-12 px-6 text-center space-y-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40">
+              <FolderOpen className="w-10 h-10 text-amber-500 mx-auto opacity-85" />
+              <div className="space-y-1">
+                <h3 className="font-display font-semibold text-base text-slate-900 dark:text-white">
+                  {seasons.length > 0
+                    ? `Season ${selectedSeason} Folder is Empty`
+                    : 'This Media Folder is Empty'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+                  No video files (<code className="font-mono">.mp4</code>, <code className="font-mono">.mkv</code>,{' '}
+                  <code className="font-mono">.webm</code>, <code className="font-mono">.avi</code>,{' '}
+                  <code className="font-mono">.mov</code>) were found inside{' '}
+                  <span className="font-mono text-slate-700 dark:text-slate-300">
+                    {seasons.length > 0
+                      ? `${item.relativePath}/Season ${selectedSeason}`
+                      : item.relativePath}
+                  </span>
+                  .
+                </p>
+              </div>
+            </div>
+          ) : (
+            seasonEpisodes.map((ep) => {
+              const hasProgress = ep.progress.currentTime > 0 && !ep.progress.completed;
+              const pct =
+                ep.progress.duration > 0
+                  ? Math.min(100, Math.round((ep.progress.currentTime / ep.progress.duration) * 100))
+                  : 0;
 
-            return (
-              <div
-                key={ep.id}
-                className="pt-3 first:pt-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl p-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-              >
-                <div className="space-y-1.5 flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                    <span className="font-semibold text-rose-600 dark:text-rose-400">
-                      S{String(ep.seasonNumber).padStart(2, '0')} · E{String(ep.episodeNumber).padStart(2, '0')}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="uppercase">{ep.containerFormat}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{ep.resolutionLabel}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{formatTimecode(ep.progress.duration)}</span>
-                    {ep.subtitles.length > 0 && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="inline-flex items-center gap-1">
-                          <Subtitles className="w-3.5 h-3.5" />
-                          {ep.subtitles.length} {ep.subtitles.length === 1 ? 'Sub' : 'Subs'}
-                        </span>
-                      </>
-                    )}
-                    {ep.audioTracks.length > 1 && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="inline-flex items-center gap-1">
-                          <Volume2 className="w-3.5 h-3.5" />
-                          Dual Audio
-                        </span>
-                      </>
+              const epStatus =
+                ep.progress.status ||
+                (ep.progress.completed
+                  ? 'Completed'
+                  : ep.progress.currentTime > 0
+                  ? 'Watching'
+                  : 'Unwatched');
+              const lastWatchedDate = ep.progress.lastWatched || ep.progress.updatedAt;
+
+              return (
+                <div
+                  key={ep.id}
+                  className="pt-3 first:pt-0 flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl p-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                >
+                  <div className="space-y-1.5 flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                      <span className="font-semibold text-rose-600 dark:text-rose-400">
+                        S{String(ep.seasonNumber).padStart(2, '0')} · E{String(ep.episodeNumber).padStart(2, '0')}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span
+                        className={
+                          epStatus === 'Completed'
+                            ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                            : epStatus === 'Watching'
+                            ? 'text-amber-600 dark:text-amber-400 font-semibold'
+                            : 'text-slate-400'
+                        }
+                      >
+                        {epStatus}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span className="uppercase">{ep.containerFormat}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{ep.resolutionLabel}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{formatTimecode(ep.progress.duration)}</span>
+                      {lastWatchedDate && (ep.progress.currentTime > 0 || ep.progress.completed) && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            Last watched {new Date(lastWatchedDate).toLocaleDateString()}
+                          </span>
+                        </>
+                      )}
+                      {ep.subtitles.length > 0 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="inline-flex items-center gap-1">
+                            <Subtitles className="w-3.5 h-3.5" />
+                            {ep.subtitles.length} {ep.subtitles.length === 1 ? 'Sub' : 'Subs'}
+                          </span>
+                        </>
+                      )}
+                      {ep.audioTracks.length > 1 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="inline-flex items-center gap-1">
+                            <Volume2 className="w-3.5 h-3.5" />
+                            Dual Audio
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    <h4
+                      className={`font-display font-semibold text-slate-900 dark:text-slate-100 truncate ${
+                        tvMode ? 'text-lg' : 'text-base'
+                      }`}
+                    >
+                      {ep.title}
+                    </h4>
+
+                    <p className="text-xs text-slate-400 font-mono truncate">{ep.fileName}</p>
+
+                    {hasProgress && (
+                      <div className="max-w-xs space-y-1 pt-1">
+                        <div className="flex justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                          <span>In Progress ({pct}%)</span>
+                          <span>
+                            {formatTimecode(ep.progress.currentTime)} / {formatTimecode(ep.progress.duration)}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div className="h-full bg-rose-500" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
                     )}
                   </div>
 
-                  <h4
-                    className={`font-display font-semibold text-slate-900 dark:text-slate-100 truncate ${
-                      tvMode ? 'text-lg' : 'text-base'
-                    }`}
-                  >
-                    {ep.title}
-                  </h4>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      data-focusable="true"
+                      onClick={() => onPlayEpisode(item, ep)}
+                      className={`inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                        tvMode ? 'px-5 py-2.5 text-sm' : 'px-4 py-2 text-xs'
+                      }`}
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>{hasProgress ? 'Resume' : 'Play'}</span>
+                    </button>
 
-                  <p className="text-xs text-slate-400 font-mono truncate">{ep.fileName}</p>
-
-                  {hasProgress && (
-                    <div className="max-w-xs space-y-1 pt-1">
-                      <div className="flex justify-between text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                        <span>In Progress ({pct}%)</span>
-                        <span>
-                          {formatTimecode(ep.progress.currentTime)} / {formatTimecode(ep.progress.duration)}
-                        </span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                        <div className="h-full bg-rose-500" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  )}
+                    <button
+                      type="button"
+                      data-focusable="true"
+                      onClick={() => onToggleEpisodeWatched(ep, !ep.progress.completed)}
+                      className={`inline-flex items-center gap-1.5 border font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                        tvMode ? 'px-4 py-2.5 text-sm' : 'px-3 py-2 text-xs'
+                      } ${
+                        ep.progress.completed
+                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                          : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{ep.progress.completed ? 'Watched' : 'Mark Watched'}</span>
+                    </button>
+                  </div>
                 </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    data-focusable="true"
-                    onClick={() => onPlayEpisode(item, ep)}
-                    className={`inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                      tvMode ? 'px-5 py-2.5 text-sm' : 'px-4 py-2 text-xs'
-                    }`}
-                  >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>{hasProgress ? 'Resume' : 'Play'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-focusable="true"
-                    onClick={() => onToggleEpisodeWatched(ep, !ep.progress.completed)}
-                    className={`inline-flex items-center gap-1.5 border font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                      tvMode ? 'px-4 py-2.5 text-sm' : 'px-3 py-2 text-xs'
-                    } ${
-                      ep.progress.completed
-                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                        : 'border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>{ep.progress.completed ? 'Watched' : 'Mark Watched'}</span>
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
     </div>

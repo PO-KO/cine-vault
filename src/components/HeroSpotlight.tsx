@@ -10,7 +10,7 @@ import {
 
 interface HeroSpotlightProps {
   item: MediaItem;
-  targetEpisode: MediaEpisode;
+  targetEpisode?: MediaEpisode;
   onPlayEpisode: (item: MediaItem, episode: MediaEpisode) => void;
   onOpenSeriesDetails: (item: MediaItem) => void;
   onToggleFavorite: (item: MediaItem) => void;
@@ -29,9 +29,11 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
 }) => {
   const [imgError, setImgError] = useState(false);
 
-  const hasProgress = targetEpisode.progress.currentTime > 0 && !targetEpisode.progress.completed;
+  const hasProgress = Boolean(
+    targetEpisode && targetEpisode.progress.currentTime > 0 && !targetEpisode.progress.completed
+  );
   const progressPercent =
-    targetEpisode.progress.duration > 0
+    targetEpisode && targetEpisode.progress.duration > 0
       ? Math.min(100, Math.round((targetEpisode.progress.currentTime / targetEpisode.progress.duration) * 100))
       : 0;
 
@@ -91,9 +93,13 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
               )}
               <span aria-hidden="true">·</span>
               <span className="text-slate-300 font-mono tabular-nums">
-                {item.autoType === 'series'
+                {item.totalEpisodes === 0
+                  ? 'Empty Folder (0 Eps)'
+                  : item.autoType === 'series'
                   ? `${item.totalEpisodes} ${item.totalEpisodes === 1 ? 'Episode' : 'Episodes'}`
-                  : formatDurationHuman(targetEpisode.estimatedDurationSec)}
+                  : targetEpisode
+                  ? formatDurationHuman(targetEpisode.estimatedDurationSec)
+                  : 'Movie'}
               </span>
             </div>
 
@@ -114,10 +120,14 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
                     <span>{g}</span>
                   </React.Fragment>
                 ))}
-                <span aria-hidden="true">·</span>
-                <span className="font-mono uppercase text-slate-400">{targetEpisode.containerFormat}</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono text-slate-400">{targetEpisode.resolutionLabel}</span>
+                {targetEpisode && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-mono uppercase text-slate-400">{targetEpisode.containerFormat}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-mono text-slate-400">{targetEpisode.resolutionLabel}</span>
+                  </>
+                )}
               </div>
             )}
 
@@ -128,7 +138,7 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
 
           {/* Active Episode & Resume Progress Bar */}
           <div className="space-y-4 pt-1">
-            {hasProgress && (
+            {hasProgress && targetEpisode && (
               <div className="max-w-md space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-slate-300 font-mono tabular-nums">
                   <span>
@@ -155,29 +165,43 @@ export const HeroSpotlight: React.FC<HeroSpotlightProps> = ({
 
             {/* Primary & Secondary Action Buttons */}
             <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                type="button"
-                data-focusable="true"
-                onClick={() => onPlayEpisode(item, targetEpisode)}
-                className={`inline-flex items-center gap-2.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  tvMode ? 'px-7 py-3.5 text-base' : 'px-5 py-2.5 text-sm'
-                }`}
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>
-                  {hasProgress
-                    ? item.autoType === 'series'
-                      ? `Resume S${String(targetEpisode.seasonNumber).padStart(2, '0')}E${String(
-                          targetEpisode.episodeNumber
-                        ).padStart(2, '0')}`
-                      : 'Resume Movie'
-                    : item.autoType === 'series'
-                    ? 'Play S01E01'
-                    : 'Play Movie'}
-                </span>
-              </button>
+              {targetEpisode ? (
+                <button
+                  type="button"
+                  data-focusable="true"
+                  onClick={() => onPlayEpisode(item, targetEpisode)}
+                  className={`inline-flex items-center gap-2.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    tvMode ? 'px-7 py-3.5 text-base' : 'px-5 py-2.5 text-sm'
+                  }`}
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>
+                    {hasProgress
+                      ? item.autoType === 'series'
+                        ? `Resume S${String(targetEpisode.seasonNumber).padStart(2, '0')}E${String(
+                            targetEpisode.episodeNumber
+                          ).padStart(2, '0')}`
+                        : 'Resume Movie'
+                      : item.autoType === 'series'
+                      ? 'Play S01E01'
+                      : 'Play Movie'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-focusable="true"
+                  onClick={() => onOpenSeriesDetails(item)}
+                  className={`inline-flex items-center gap-2.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    tvMode ? 'px-7 py-3.5 text-base' : 'px-5 py-2.5 text-sm'
+                  }`}
+                >
+                  <ListVideo className="w-4 h-4" />
+                  <span>Open Empty Folder</span>
+                </button>
+              )}
 
-              {item.autoType === 'series' && (
+              {item.autoType === 'series' && targetEpisode && (
                 <button
                   type="button"
                   data-focusable="true"

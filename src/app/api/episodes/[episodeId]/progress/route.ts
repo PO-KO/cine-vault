@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ensureInitialized, saveState } from '@/src/lib/mediaServer';
+import {
+  ensureInitialized,
+  getWatchHistory,
+  upsertEpisodeProgressInDb,
+} from '@/src/lib/mediaServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,31 +14,46 @@ export async function PUT(
   const { episodeId } = await context.params;
   const state = await ensureInitialized();
   const body = await request.json().catch(() => ({}));
-  const { currentTime, duration, completed } = body as {
+  const {
+    currentTime,
+    duration,
+    completed,
+    mediaId,
+    mediaTitle,
+    episodeTitle,
+    seasonNumber,
+    episodeNumber,
+    posterUrl,
+  } = body as {
     currentTime?: number;
     duration?: number;
     completed?: boolean;
+    mediaId?: string;
+    mediaTitle?: string;
+    episodeTitle?: string;
+    seasonNumber?: number;
+    episodeNumber?: number;
+    posterUrl?: string;
   };
 
-  const existing = state.episodeProgress[episodeId] || {
-    currentTime: 0,
-    duration: 1440,
-    completed: false,
-    updatedAt: new Date().toISOString(),
-  };
+  const progress = upsertEpisodeProgressInDb(
+    episodeId,
+    {
+      currentTime,
+      duration,
+      completed,
+      mediaId,
+      mediaTitle,
+      episodeTitle,
+      seasonNumber,
+      episodeNumber,
+      posterUrl,
+    },
+    state
+  );
 
-  const nextDuration = typeof duration === 'number' && duration > 0 ? duration : existing.duration;
-  const nextTime = typeof currentTime === 'number' && currentTime >= 0 ? currentTime : existing.currentTime;
-  const isCompleted =
-    typeof completed === 'boolean' ? completed : nextDuration > 0 && nextTime / nextDuration >= 0.92;
-
-  state.episodeProgress[episodeId] = {
-    currentTime: isCompleted && typeof completed === 'boolean' && completed ? 0 : Math.floor(nextTime),
-    duration: Math.floor(nextDuration),
-    completed: isCompleted,
-    updatedAt: new Date().toISOString(),
-  };
-
-  saveState(state);
-  return NextResponse.json({ progress: state.episodeProgress[episodeId] });
+  return NextResponse.json({
+    progress,
+    watchHistory: getWatchHistory(60),
+  });
 }

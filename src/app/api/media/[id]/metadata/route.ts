@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ensureInitialized,
+  getHydratedClientCatalogSnapshot,
   saveState,
   scanLibraryWithMetadata,
 } from '@/src/lib/mediaServer';
@@ -47,7 +48,6 @@ export async function PUT(
   if (category && ['anime', 'tv', 'movies', 'other'].includes(category)) {
     const previousCat = state.manualCategories[id];
     state.manualCategories[id] = category;
-    // If category changed and no explicit externalMatch was sent, clear cached metadata so it re-resolves from the right provider (AniList vs TMDB)
     if (!externalMatch && previousCat !== category && state.externalMetadataCache?.[id]) {
       delete state.externalMetadataCache[id];
     }
@@ -79,6 +79,14 @@ export async function PUT(
 
   saveState(state);
   const { items } = await scanLibraryWithMetadata(state);
-  const updatedItem = items.find((item) => item.id === id);
-  return NextResponse.json({ item: updatedItem, items });
+  const clientSnapshot = getHydratedClientCatalogSnapshot(state);
+  const updatedItem =
+    items.find((item) => item.id === id) ||
+    clientSnapshot?.items.find((item) => item.id === id);
+
+  return NextResponse.json({
+    item: updatedItem,
+    items,
+    clientSnapshot,
+  });
 }

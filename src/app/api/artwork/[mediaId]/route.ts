@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { ensureInitialized, getArtworkFilePath } from '@/src/lib/mediaServer';
+import {
+  ensureInitialized,
+  getArtworkFilePath,
+  isPathAllowedInLibrary,
+} from '@/src/lib/mediaServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +17,7 @@ export async function GET(
   const state = await ensureInitialized();
   const artPath = getArtworkFilePath(mediaId, state);
 
-  if (!artPath || !fs.existsSync(artPath)) {
+  if (!artPath || !fs.existsSync(artPath) || !isPathAllowedInLibrary(artPath, state)) {
     return new NextResponse('Artwork not found', { status: 404 });
   }
 

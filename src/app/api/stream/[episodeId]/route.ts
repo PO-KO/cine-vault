@@ -7,14 +7,88 @@ import {
   ensureInitialized,
   getEpisodeEntry,
   isFfmpegAvailable,
+  isPathAllowedInLibrary,
+  verifyRequestLanAccess,
 } from '@/src/lib/mediaServer';
 
 export const dynamic = 'force-dynamic';
+
+function nodeStreamToWebStream(
+  nodeStream: Readable,
+  signal?: AbortSignal,
+  onCleanup?: () => void
+): ReadableStream<Uint8Array> {
+  let controllerClosed = false;
+
+  const cleanup = () => {
+    controllerClosed = true;
+    try {
+      nodeStream.destroy();
+    } catch {}
+    if (onCleanup) {
+      try {
+        onCleanup();
+      } catch {}
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const safeClose = () => {
+        if (controllerClosed) return;
+        controllerClosed = true;
+        try {
+          controller.close();
+        } catch {}
+      };
+
+      nodeStream.on('data', (chunk: Buffer | string) => {
+        if (controllerClosed) return;
+        try {
+          const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+          controller.enqueue(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+        } catch {
+          cleanup();
+        }
+      });
+
+      nodeStream.on('end', () => {
+        safeClose();
+      });
+
+      nodeStream.on('close', () => {
+        safeClose();
+      });
+
+      nodeStream.on('error', () => {
+        safeClose();
+      });
+
+      if (signal) {
+        signal.addEventListener(
+          'abort',
+          () => {
+            safeClose();
+            cleanup();
+          },
+          { once: true }
+        );
+      }
+    },
+    cancel() {
+      cleanup();
+    },
+  });
+}
 
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ episodeId: string }> }
 ) {
+  if (!verifyRequestLanAccess(request)) {
+    return NextResponse.json({ error: 'LAN PIN authentication required' }, { status: 401 });
+  }
+
   const { episodeId } = await context.params;
   const state = await ensureInitialized();
   const epEntry = getEpisodeEntry(episodeId, state);
@@ -24,10 +98,9 @@ export async function GET(
   }
 
   const resolvedFile = path.resolve(epEntry.fullPath);
-  const resolvedRoot = path.resolve(state.rootPath);
-  if (!resolvedFile.startsWith(resolvedRoot)) {
+  if (!isPathAllowedInLibrary(resolvedFile, state)) {
     return NextResponse.json(
-      { error: 'Access denied outside configured root directory' },
+      { error: 'Access denied outside configured media directories' },
       { status: 403 }
     );
   }
@@ -38,11 +111,18 @@ export async function GET(
     epEntry.containerFormat === 'mkv' ||
     epEntry.containerFormat === 'avi';
   const audioTrackIndex = parseInt(searchParams.get('audioTrack') || '0', 10) || 0;
+  const startSec = parseFloat(searchParams.get('start') || '0') || 0;
 
   if (forceRemux && isFfmpegAvailable() && !epEntry.isSampleSynthetic) {
     const ffmpegArgs = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      ...(startSec > 0 ? ['-ss', String(startSec)] : []),
       '-i',
       resolvedFile,
+      '-sn',
+      '-dn',
       '-map',
       '0:v:0',
       '-map',
@@ -51,6 +131,10 @@ export async function GET(
       epEntry.containerFormat === 'avi' ? 'libx264' : 'copy',
       '-c:a',
       'aac',
+      '-ac',
+      '2',
+      '-ar',
+      '48000',
       '-b:a',
       '192k',
       '-movflags',
@@ -61,9 +145,10 @@ export async function GET(
     ];
 
     const ffProcess = spawn('ffmpeg', ffmpegArgs);
-    const webStream = Readable.toWeb(ffProcess.stdout) as ReadableStream;
-    request.signal.addEventListener('abort', () => {
-      ffProcess.kill('SIGKILL');
+    const webStream = nodeStreamToWebStream(ffProcess.stdout, request.signal, () => {
+      try {
+        ffProcess.kill('SIGKILL');
+      } catch {}
     });
 
     return new NextResponse(webStream, {
@@ -104,7 +189,7 @@ export async function GET(
 
     const chunkSize = end - start + 1;
     const nodeStream = fs.createReadStream(resolvedFile, { start, end });
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+    const webStream = nodeStreamToWebStream(nodeStream, request.signal);
 
     return new NextResponse(webStream, {
       status: 206,
@@ -118,7 +203,7 @@ export async function GET(
   }
 
   const nodeStream = fs.createReadStream(resolvedFile);
-  const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+  const webStream = nodeStreamToWebStream(nodeStream, request.signal);
 
   return new NextResponse(webStream, {
     status: 200,
